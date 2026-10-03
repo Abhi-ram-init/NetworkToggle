@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget colors -->
+    <color name="widget_color_5g">#00E5FF</color>
+    <color name="widget_color_4g">#7B61FF</color>
+    <color name="widget_text_primary">#FFFFFFFF</color>
+    <color name="widget_text_secondary">#99FFFFFF</color>
+    <color name="widget_icon_tint">#CCFFFFFF</color>
+    <color name="widget_btn_text">#00E5FF</color>
+</resources>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Network Toggle</string>
+    <string name="tile_label">Network Mode</string>
+    <string name="widget_description">Toggle between 5G and 4G directly from your home screen</string>
+    <string name="widget_compact_description">Compact 1x1 circular quick toggle widget</string>
+    <string name="widget_dashboard_description">Multi-option network dashboard with direct 5G, Auto, 4G, and Force Menu buttons</string>
+    <string name="shortcut_5g_short">5G Mode</string>
+    <string name="shortcut_5g_long">Switch to 5G Network</string>
+    <string name="shortcut_4g_short">4G Mode</string>
+    <string name="shortcut_4g_long">Switch to 4G / LTE</string>
+    <string name="shortcut_disabled">Network Toggle is unavailable</string>
+    <string name="perm_label">Exclusive Network Toggle Control</string>
+    <string name="perm_description">Restricts network toggling controls exclusively to this app. No external application can access or invoke this permission.</string>
+</resources>

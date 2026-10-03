@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_compact_description"
+    android:initialKeyguardLayout="@layout/widget_compact_toggle"
+    android:initialLayout="@layout/widget_compact_toggle"
+    android:minWidth="60dp"
+    android:minHeight="60dp"
+    android:resizeMode="none"
+    android:targetCellWidth="1"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

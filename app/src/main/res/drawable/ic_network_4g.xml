@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 4G/LTE Icon using signal bars -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Signal bars -->
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M1,21 L1,17 L3,17 L3,21 Z" />
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M5,21 L5,14 L7,14 L7,21 Z" />
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M9,21 L9,10 L11,10 L11,21 Z" />
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M13,21 L13,5 L15,5 L15,21 Z" />
+    <!-- 4G text representation -->
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M17,3 L17,9 L19,9 L19,3 Z" />
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M17,9 L22,9 L22,11 L17,11 Z" />
+    <path
+        android:fillColor="#7B61FF"
+        android:pathData="M21,3 L23,3 L23,14 L21,14 Z" />
+
+</vector>

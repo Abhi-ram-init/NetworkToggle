@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Static shortcut: Switch to 5G -->
+    <shortcut
+        android:shortcutId="switch_to_5g"
+        android:enabled="true"
+        android:icon="@drawable/ic_network_5g"
+        android:shortcutShortLabel="@string/shortcut_5g_short"
+        android:shortcutLongLabel="@string/shortcut_5g_long"
+        android:shortcutDisabledMessage="@string/shortcut_disabled">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.networktoggle"
+            android:targetClass="com.example.networktoggle.MainActivity">
+            <extra android:name="TARGET_MODE" android:value="5G" />
+        </intent>
+    </shortcut>
+
+    <!-- Static shortcut: Switch to 4G -->
+    <shortcut
+        android:shortcutId="switch_to_4g"
+        android:enabled="true"
+        android:icon="@drawable/ic_network_4g"
+        android:shortcutShortLabel="@string/shortcut_4g_short"
+        android:shortcutLongLabel="@string/shortcut_4g_long"
+        android:shortcutDisabledMessage="@string/shortcut_disabled">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.example.networktoggle"
+            android:targetClass="com.example.networktoggle.MainActivity">
+            <extra android:name="TARGET_MODE" android:value="4G" />
+        </intent>
+    </shortcut>
+
+</shortcuts>
