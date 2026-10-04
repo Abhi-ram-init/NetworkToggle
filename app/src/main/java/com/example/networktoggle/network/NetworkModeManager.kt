@@ -16,8 +16,8 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Log
+import android.widget.Toast
 import androidx.core.content.ContextCompat
-import com.example.networktoggle.service.AutoScrollService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,22 +112,6 @@ class NetworkModeManager(private val context: Context) {
         prefs.edit().putString("selected_ui_style", style.name).apply()
     }
 
-    fun getAutoScrollEnabled(): Boolean {
-        return prefs.getBoolean("auto_scroll_enabled", true)
-    }
-
-    fun saveAutoScrollEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("auto_scroll_enabled", enabled).apply()
-    }
-
-    fun isAccessibilityEnabled(): Boolean {
-        return AutoScrollService.isAccessibilityEnabled(context)
-    }
-
-    fun openAccessibilitySettings() {
-        AutoScrollService.openAccessibilitySettings(context)
-    }
-
     fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
         val is5G = mode == NetworkMode.FIVE_G
 
@@ -210,10 +194,8 @@ class NetworkModeManager(private val context: Context) {
      * that allows users to pick "NR only", "NR/LTE", or "LTE only" directly.
      */
     fun openRadioInfo(ctx: Context = context): Boolean {
-        if (getAutoScrollEnabled()) {
-            AutoScrollService.startAutoScrollSession(ctx)
-            triggerRootSwipeIfApplicable()
-        }
+        Toast.makeText(ctx, "💡 Scroll down to: Set Preferred Network Type", Toast.LENGTH_SHORT).show()
+        triggerRootSwipeIfApplicable()
         val intents = listOf(
             Intent("android.intent.action.MAIN").setClassName(
                 "com.android.settings", "com.android.settings.RadioInfo"
@@ -245,10 +227,8 @@ class NetworkModeManager(private val context: Context) {
      * Opens the device's Mobile Network Settings page directly.
      */
     fun openMobileNetworkSettings(ctx: Context = context): Boolean {
-        if (getAutoScrollEnabled()) {
-            AutoScrollService.startAutoScrollSession(ctx)
-            triggerRootSwipeIfApplicable()
-        }
+        Toast.makeText(ctx, "💡 Preferred network type highlighted below", Toast.LENGTH_SHORT).show()
+        triggerRootSwipeIfApplicable()
 
         val fragmentArgs = Bundle().apply {
             putString(":settings:fragment_args_key", "enabled_networks_key")
@@ -288,23 +268,22 @@ class NetworkModeManager(private val context: Context) {
     }
 
     private fun triggerRootSwipeIfApplicable() {
-        if (!AutoScrollService.isAccessibilityEnabled(context)) {
-            Thread {
-                try {
-                    Thread.sleep(700)
-                    for (i in 1..4) {
-                        val process = Runtime.getRuntime().exec("su")
-                        val os = DataOutputStream(process.outputStream)
-                        os.writeBytes("input swipe 500 1600 500 400 250\n")
-                        os.writeBytes("exit\n")
-                        os.flush()
-                        process.waitFor()
-                        Thread.sleep(300)
-                    }
-                } catch (_: Exception) {
+        Thread {
+            try {
+                Thread.sleep(700)
+                for (i in 1..4) {
+                    val process = Runtime.getRuntime().exec("su")
+                    val os = DataOutputStream(process.outputStream)
+                    os.writeBytes("input swipe 500 1600 500 400 250\n")
+                    os.writeBytes("exit\n")
+                    os.flush()
+                    val exit = process.waitFor()
+                    if (exit != 0) break
+                    Thread.sleep(300)
                 }
-            }.start()
-        }
+            } catch (_: Exception) {
+            }
+        }.start()
     }
 
     fun refreshNetworkState() {

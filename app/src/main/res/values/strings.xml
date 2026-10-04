@@ -12,6 +12,4 @@
     <string name="shortcut_disabled">Network Toggle is unavailable</string>
     <string name="perm_label">Exclusive Network Toggle Control</string>
     <string name="perm_description">Restricts network toggling controls exclusively to this app. No external application can access or invoke this permission.</string>
-    <string name="accessibility_service_name">Network Toggle Auto-Scroll Helper</string>
-    <string name="accessibility_service_description">Automatically scrolls down settings until reaching the 5G / 4G preferred network toggle option or bottom of the screen.</string>
 </resources>
