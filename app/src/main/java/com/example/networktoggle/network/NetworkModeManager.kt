@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
@@ -16,6 +17,7 @@ import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.example.networktoggle.service.AutoScrollService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -110,6 +112,22 @@ class NetworkModeManager(private val context: Context) {
         prefs.edit().putString("selected_ui_style", style.name).apply()
     }
 
+    fun getAutoScrollEnabled(): Boolean {
+        return prefs.getBoolean("auto_scroll_enabled", true)
+    }
+
+    fun saveAutoScrollEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_scroll_enabled", enabled).apply()
+    }
+
+    fun isAccessibilityEnabled(): Boolean {
+        return AutoScrollService.isAccessibilityEnabled(context)
+    }
+
+    fun openAccessibilitySettings() {
+        AutoScrollService.openAccessibilitySettings(context)
+    }
+
     fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
         val is5G = mode == NetworkMode.FIVE_G
 
@@ -192,6 +210,10 @@ class NetworkModeManager(private val context: Context) {
      * that allows users to pick "NR only", "NR/LTE", or "LTE only" directly.
      */
     fun openRadioInfo(ctx: Context = context): Boolean {
+        if (getAutoScrollEnabled()) {
+            AutoScrollService.startAutoScrollSession(ctx)
+            triggerRootSwipeIfApplicable()
+        }
         val intents = listOf(
             Intent("android.intent.action.MAIN").setClassName(
                 "com.android.settings", "com.android.settings.RadioInfo"
@@ -223,6 +245,15 @@ class NetworkModeManager(private val context: Context) {
      * Opens the device's Mobile Network Settings page directly.
      */
     fun openMobileNetworkSettings(ctx: Context = context): Boolean {
+        if (getAutoScrollEnabled()) {
+            AutoScrollService.startAutoScrollSession(ctx)
+            triggerRootSwipeIfApplicable()
+        }
+
+        val fragmentArgs = Bundle().apply {
+            putString(":settings:fragment_args_key", "enabled_networks_key")
+        }
+
         val intents = listOf(
             Intent(Settings.ACTION_NETWORK_OPERATOR_SETTINGS),
             Intent().setComponent(
@@ -245,6 +276,8 @@ class NetworkModeManager(private val context: Context) {
         )
         for (intent in intents) {
             try {
+                intent.putExtra(":settings:fragment_args_key", "enabled_networks_key")
+                intent.putExtra(":settings:show_fragment_args", fragmentArgs)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 ctx.startActivity(intent)
                 return true
@@ -252,6 +285,26 @@ class NetworkModeManager(private val context: Context) {
             }
         }
         return false
+    }
+
+    private fun triggerRootSwipeIfApplicable() {
+        if (!AutoScrollService.isAccessibilityEnabled(context)) {
+            Thread {
+                try {
+                    Thread.sleep(700)
+                    for (i in 1..4) {
+                        val process = Runtime.getRuntime().exec("su")
+                        val os = DataOutputStream(process.outputStream)
+                        os.writeBytes("input swipe 500 1600 500 400 250\n")
+                        os.writeBytes("exit\n")
+                        os.flush()
+                        process.waitFor()
+                        Thread.sleep(300)
+                    }
+                } catch (_: Exception) {
+                }
+            }.start()
+        }
     }
 
     fun refreshNetworkState() {

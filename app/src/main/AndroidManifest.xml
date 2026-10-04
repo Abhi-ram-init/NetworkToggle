@@ -106,6 +106,19 @@
             </intent-filter>
         </service>
 
+        <!-- Auto-Scroll Accessibility Service to automatically scroll settings down to toggle option -->
+        <service
+            android:name=".service.AutoScrollService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/auto_scroll_accessibility_service_config" />
+        </service>
+
     </application>
 
 </manifest>

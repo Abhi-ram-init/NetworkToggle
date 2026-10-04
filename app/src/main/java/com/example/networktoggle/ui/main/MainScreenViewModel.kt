@@ -29,6 +29,8 @@ data class MainScreenUiState(
     val selectedChoice: NetworkMode = NetworkMode.FIVE_G,
     val switchStatus: SwitchStatus = SwitchStatus.Idle,
     val uiStyle: com.example.networktoggle.network.AppUiStyle = com.example.networktoggle.network.AppUiStyle.CYBER_NEON,
+    val isAutoScrollEnabled: Boolean = true,
+    val isAccessibilityEnabled: Boolean = false,
 ) {
     // Current truthful display mode: driven strictly by live hardware connection
     val currentConnectedMode: NetworkMode
@@ -44,7 +46,9 @@ class MainScreenViewModel(
             liveNetwork = networkModeManager.detectCurrentNetwork(),
             hasPermission = networkModeManager.hasPermission(),
             selectedChoice = networkModeManager.getSavedMode(),
-            uiStyle = networkModeManager.getSavedUiStyle()
+            uiStyle = networkModeManager.getSavedUiStyle(),
+            isAutoScrollEnabled = networkModeManager.getAutoScrollEnabled(),
+            isAccessibilityEnabled = networkModeManager.isAccessibilityEnabled()
         )
     )
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
@@ -82,6 +86,7 @@ class MainScreenViewModel(
 
     fun onAppResumed() {
         refreshPermission()
+        refreshAccessibilityStatus()
         val currentStatus = _uiState.value.switchStatus
         if (currentStatus is SwitchStatus.Switching) {
             viewModelScope.launch {
@@ -124,9 +129,24 @@ class MainScreenViewModel(
         }
     }
 
+    fun refreshAccessibilityStatus() {
+        val enabled = networkModeManager.isAccessibilityEnabled()
+        val autoScroll = networkModeManager.getAutoScrollEnabled()
+        _uiState.update { it.copy(isAccessibilityEnabled = enabled, isAutoScrollEnabled = autoScroll) }
+    }
+
+    fun toggleAutoScroll(enabled: Boolean) {
+        networkModeManager.saveAutoScrollEnabled(enabled)
+        _uiState.update { it.copy(isAutoScrollEnabled = enabled) }
+    }
+
+    fun openAccessibilitySettings() {
+        networkModeManager.openAccessibilitySettings()
+    }
+
     fun onPermissionGranted() {
-        _uiState.update { it.copy(hasPermission = true) }
         networkModeManager.refreshNetworkState()
+        _uiState.update { it.copy(hasPermission = true) }
     }
 
     /**

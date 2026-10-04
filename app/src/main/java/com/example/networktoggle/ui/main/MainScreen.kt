@@ -113,6 +113,8 @@ fun MainScreen(
         },
         onOpenRadioInfo = { viewModel.openRadioInfo(context) },
         onOpenSettings = { viewModel.openMobileSettings(context) },
+        onToggleAutoScroll = viewModel::toggleAutoScroll,
+        onOpenAccessibilitySettings = viewModel::openAccessibilitySettings,
         onRefresh = viewModel::refreshLiveNetwork,
         onDismissStatus = viewModel::dismissStatus,
         modifier = modifier
@@ -128,6 +130,8 @@ private fun MainScreenContent(
     onRequestPermission: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleAutoScroll: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onRefresh: () -> Unit,
     onDismissStatus: () -> Unit,
     modifier: Modifier = Modifier,
@@ -279,6 +283,8 @@ private fun MainScreenContent(
                         onToggleDial = onToggleDial,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
+                        onToggleAutoScroll = onToggleAutoScroll,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onDismissStatus = onDismissStatus
                     )
                 }
@@ -289,6 +295,8 @@ private fun MainScreenContent(
                         onToggleDial = onToggleDial,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
+                        onToggleAutoScroll = onToggleAutoScroll,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onDismissStatus = onDismissStatus
                     )
                 }
@@ -299,6 +307,8 @@ private fun MainScreenContent(
                         onToggleDial = onToggleDial,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
+                        onToggleAutoScroll = onToggleAutoScroll,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                         onDismissStatus = onDismissStatus
                     )
                 }
@@ -317,6 +327,8 @@ private fun CyberNeonUi(
     onToggleDial: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleAutoScroll: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onDismissStatus: () -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
@@ -403,7 +415,19 @@ private fun CyberNeonUi(
         Text(text = "HARDWARE SWITCH TOOLS", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, modifier = Modifier.align(Alignment.Start))
         Spacer(modifier = Modifier.height(8.dp))
 
-        HardwareToolsRow(onOpenRadioInfo, onOpenSettings)
+        AutoScrollHelperCard(
+            isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+            isAutoScrollEnabled = uiState.isAutoScrollEnabled,
+            onToggleAutoScroll = onToggleAutoScroll,
+            onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+            accentColor = animatedAccent
+        )
+
+        HardwareToolsRow(
+            onOpenRadioInfo = onOpenRadioInfo,
+            onOpenSettings = onOpenSettings,
+            isAutoScrollActive = uiState.isAccessibilityEnabled && uiState.isAutoScrollEnabled
+        )
         WidgetOptionsSection()
     }
 }
@@ -418,6 +442,8 @@ private fun MinimalCleanUi(
     onToggleDial: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleAutoScroll: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onDismissStatus: () -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
@@ -487,7 +513,19 @@ private fun MinimalCleanUi(
         Text(text = "SHORTCUTS", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.align(Alignment.Start))
         Spacer(modifier = Modifier.height(8.dp))
 
-        HardwareToolsRow(onOpenRadioInfo, onOpenSettings)
+        AutoScrollHelperCard(
+            isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+            isAutoScrollEnabled = uiState.isAutoScrollEnabled,
+            onToggleAutoScroll = onToggleAutoScroll,
+            onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+            accentColor = primaryColor
+        )
+
+        HardwareToolsRow(
+            onOpenRadioInfo = onOpenRadioInfo,
+            onOpenSettings = onOpenSettings,
+            isAutoScrollActive = uiState.isAccessibilityEnabled && uiState.isAutoScrollEnabled
+        )
         WidgetOptionsSection()
     }
 }
@@ -502,6 +540,8 @@ private fun SpeedometerUi(
     onToggleDial: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
+    onToggleAutoScroll: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onDismissStatus: () -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
@@ -585,7 +625,19 @@ private fun SpeedometerUi(
         Text(text = "HARDWARE TOOLS", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp, modifier = Modifier.align(Alignment.Start))
         Spacer(modifier = Modifier.height(8.dp))
 
-        HardwareToolsRow(onOpenRadioInfo, onOpenSettings)
+        AutoScrollHelperCard(
+            isAccessibilityEnabled = uiState.isAccessibilityEnabled,
+            isAutoScrollEnabled = uiState.isAutoScrollEnabled,
+            onToggleAutoScroll = onToggleAutoScroll,
+            onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+            accentColor = meterColor
+        )
+
+        HardwareToolsRow(
+            onOpenRadioInfo = onOpenRadioInfo,
+            onOpenSettings = onOpenSettings,
+            isAutoScrollActive = uiState.isAccessibilityEnabled && uiState.isAutoScrollEnabled
+        )
         WidgetOptionsSection()
     }
 }
@@ -689,9 +741,115 @@ private fun ModeChoiceCard(
 }
 
 @Composable
+private fun AutoScrollHelperCard(
+    isAccessibilityEnabled: Boolean,
+    isAutoScrollEnabled: Boolean,
+    onToggleAutoScroll: (Boolean) -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    accentColor: Color,
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF12141F),
+        border = BorderStroke(1.dp, if (isAccessibilityEnabled) accentColor.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(if (isAccessibilityEnabled) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.06f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FlashOn,
+                    contentDescription = null,
+                    tint = if (isAccessibilityEnabled) accentColor else Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "AUTO-SCROLL SETTINGS",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isAccessibilityEnabled) Color(0xFF10B981).copy(alpha = 0.2f) else Color(0xFFF59E0B).copy(alpha = 0.2f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (isAccessibilityEnabled) "ACTIVE" else "SETUP",
+                            color = if (isAccessibilityEnabled) Color(0xFF10B981) else Color(0xFFF59E0B),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (isAccessibilityEnabled)
+                        "Settings automatically scrolls down to 5G/4G toggle option"
+                    else
+                        "Tap to enable Accessibility for automatic scrolling down in Settings",
+                    fontSize = 10.sp,
+                    color = Color.White.copy(alpha = 0.55f),
+                    lineHeight = 13.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            if (isAccessibilityEnabled) {
+                Switch(
+                    checked = isAutoScrollEnabled,
+                    onCheckedChange = onToggleAutoScroll,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = accentColor,
+                        uncheckedThumbColor = Color.White.copy(alpha = 0.6f),
+                        uncheckedTrackColor = Color.White.copy(alpha = 0.1f)
+                    ),
+                    modifier = Modifier.scale(0.8f)
+                )
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF38BDF8).copy(alpha = 0.18f),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
+                    modifier = Modifier.clickable { onOpenAccessibilitySettings() }
+                ) {
+                    Text(
+                        text = "ENABLE",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun HardwareToolsRow(
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
+    isAutoScrollActive: Boolean = true,
 ) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         // Force Menu
@@ -706,7 +864,11 @@ private fun HardwareToolsRow(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(text = "Force Menu", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text(text = "Pick NR / LTE", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text(
+                        text = if (isAutoScrollActive) "Auto-scrolls to NR" else "Pick NR / LTE",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
@@ -723,7 +885,11 @@ private fun HardwareToolsRow(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(text = "SIM Settings", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    Text(text = "Preferred Type", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+                    Text(
+                        text = if (isAutoScrollActive) "Auto-scrolls to Type" else "Preferred Type",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 10.sp
+                    )
                 }
             }
         }
