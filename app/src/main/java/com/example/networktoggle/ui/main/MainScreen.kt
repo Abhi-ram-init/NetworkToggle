@@ -44,7 +44,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -100,6 +102,17 @@ fun MainScreen(
         }
     }
 
+    val onKernelGrant: () -> Unit = {
+        viewModel.requestKernelRootGrant { granted ->
+            Toast.makeText(
+                context,
+                if (granted) "⚡ Kernel permission granted! Direct 1-tap switching active."
+                else "Kernel root not detected or request denied.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
     MainScreenContent(
         uiState = uiState,
         onSetUiStyle = viewModel::setUiStyle,
@@ -111,6 +124,7 @@ fun MainScreen(
         onRequestPermission = {
             permissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
         },
+        onRequestKernelGrant = onKernelGrant,
         onOpenRadioInfo = { viewModel.openRadioInfo(context) },
         onOpenSettings = { viewModel.openMobileSettings(context) },
         onRefresh = viewModel::refreshLiveNetwork,
@@ -126,6 +140,7 @@ private fun MainScreenContent(
     onSelectChoice: (NetworkMode) -> Unit,
     onToggleDial: () -> Unit,
     onRequestPermission: () -> Unit,
+    onRequestKernelGrant: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onRefresh: () -> Unit,
@@ -277,6 +292,7 @@ private fun MainScreenContent(
                         uiState = uiState,
                         onSelectChoice = onSelectChoice,
                         onToggleDial = onToggleDial,
+                        onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
                         onDismissStatus = onDismissStatus
@@ -287,6 +303,7 @@ private fun MainScreenContent(
                         uiState = uiState,
                         onSelectChoice = onSelectChoice,
                         onToggleDial = onToggleDial,
+                        onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
                         onDismissStatus = onDismissStatus
@@ -297,6 +314,7 @@ private fun MainScreenContent(
                         uiState = uiState,
                         onSelectChoice = onSelectChoice,
                         onToggleDial = onToggleDial,
+                        onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
                         onDismissStatus = onDismissStatus
@@ -315,6 +333,7 @@ private fun CyberNeonUi(
     uiState: MainScreenUiState,
     onSelectChoice: (NetworkMode) -> Unit,
     onToggleDial: () -> Unit,
+    onRequestKernelGrant: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
@@ -404,6 +423,7 @@ private fun CyberNeonUi(
         Spacer(modifier = Modifier.height(8.dp))
 
         PrivacySafetyCard(accentColor = animatedAccent)
+        DirectSwitchCard(uiState = uiState, onRequestKernelGrant = onRequestKernelGrant, accentColor = animatedAccent)
 
         HardwareToolsRow(
             onOpenRadioInfo = onOpenRadioInfo,
@@ -421,6 +441,7 @@ private fun MinimalCleanUi(
     uiState: MainScreenUiState,
     onSelectChoice: (NetworkMode) -> Unit,
     onToggleDial: () -> Unit,
+    onRequestKernelGrant: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
@@ -493,6 +514,7 @@ private fun MinimalCleanUi(
         Spacer(modifier = Modifier.height(8.dp))
 
         PrivacySafetyCard(accentColor = primaryColor)
+        DirectSwitchCard(uiState = uiState, onRequestKernelGrant = onRequestKernelGrant, accentColor = primaryColor)
 
         HardwareToolsRow(
             onOpenRadioInfo = onOpenRadioInfo,
@@ -510,6 +532,7 @@ private fun SpeedometerUi(
     uiState: MainScreenUiState,
     onSelectChoice: (NetworkMode) -> Unit,
     onToggleDial: () -> Unit,
+    onRequestKernelGrant: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
@@ -596,6 +619,7 @@ private fun SpeedometerUi(
         Spacer(modifier = Modifier.height(8.dp))
 
         PrivacySafetyCard(accentColor = meterColor)
+        DirectSwitchCard(uiState = uiState, onRequestKernelGrant = onRequestKernelGrant, accentColor = meterColor)
 
         HardwareToolsRow(
             onOpenRadioInfo = onOpenRadioInfo,
@@ -735,6 +759,158 @@ private fun PrivacySafetyCard(accentColor: Color) {
                     color = Color.White.copy(alpha = 0.5f),
                     fontSize = 10.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectSwitchCard(
+    uiState: MainScreenUiState,
+    onRequestKernelGrant: () -> Unit,
+    accentColor: Color,
+) {
+    val context = LocalContext.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF10131E),
+        border = BorderStroke(
+            1.dp,
+            if (uiState.isDirectToggleGranted) Color(0xFF10B981).copy(alpha = 0.35f) else Color(0xFFF59E0B).copy(alpha = 0.25f)
+        ),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.FlashOn,
+                        contentDescription = null,
+                        tint = if (uiState.isDirectToggleGranted) Color(0xFF10B981) else Color(0xFFF59E0B),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "1-TAP DIRECT TOGGLE",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (uiState.isDirectToggleGranted) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFFF59E0B).copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, if (uiState.isDirectToggleGranted) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFFF59E0B).copy(alpha = 0.4f))
+                ) {
+                    Text(
+                        text = if (uiState.isDirectToggleGranted) "ACTIVE" else "SETUP NEEDED",
+                        color = if (uiState.isDirectToggleGranted) Color(0xFF10B981) else Color(0xFFF59E0B),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            if (uiState.isDirectToggleGranted) {
+                Text(
+                    text = "Permission granted from Kernel Root / ADB! App, home widgets, and Quick Settings tile switch network modes directly in 1 tap without opening any menus.",
+                    color = Color.White.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+            } else {
+                Text(
+                    text = "Android sandbox restricts background toggling by default. Grant permission once via Kernel Root or an ADB command to enable seamless 1-tap toggling:",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Kernel Root Grant Button
+                Button(
+                    onClick = onRequestKernelGrant,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (uiState.isKernelRootDetected) Color(0xFF10B981) else Color(0xFF1E293B)
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().height(38.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = if (uiState.isKernelRootDetected) Color.Black else Color(0xFF38BDF8),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (uiState.isKernelRootDetected) "⚡ GRANT VIA KERNEL (ROOT DETECTED)" else "⚡ TRY GRANT VIA KERNEL (ROOT)",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (uiState.isKernelRootDetected) Color.Black else Color.White
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // ADB Command Box
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF090B12),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "VIA ADB (PC / MAC / LINUX):",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White.copy(alpha = 0.5f),
+                                letterSpacing = 0.5.sp
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF00F5D4).copy(alpha = 0.15f),
+                                modifier = Modifier.clickable {
+                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(uiState.adbGrantCommand))
+                                    Toast.makeText(context, "ADB command copied! Run in terminal/CMD", Toast.LENGTH_SHORT).show()
+                                }
+                            ) {
+                                Text(
+                                    text = "COPY COMMAND",
+                                    color = Color(0xFF00F5D4),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = uiState.adbGrantCommand,
+                            fontSize = 10.sp,
+                            color = Color(0xFF00F5D4).copy(alpha = 0.85f),
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
             }
         }
     }

@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.telephony.PhoneStateListener
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
@@ -112,22 +113,62 @@ class NetworkModeManager(private val context: Context) {
         prefs.edit().putString("selected_ui_style", style.name).apply()
     }
 
-    fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
-        val is5G = mode == NetworkMode.FIVE_G
+    fun hasSecureSettingsPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context, Manifest.permission.WRITE_SECURE_SETTINGS
+        ) == PackageManager.PERMISSION_GRANTED
+    }
 
-        // Strategy 1: Root command if user's device is rooted
-        if (tryRootSwitch(is5G)) {
+    fun isKernelRootAvailable(): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
+            val reader = process.inputStream.bufferedReader()
+            val line = reader.readLine() ?: ""
+            val exitCode = process.waitFor()
+            exitCode == 0 && (line.contains("uid=0") || line.contains("root"))
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun requestKernelPermission(): Boolean {
+        return try {
+            val pkg = context.packageName
+            val process = Runtime.getRuntime().exec("su")
+            val os = DataOutputStream(process.outputStream)
+            os.writeBytes("pm grant $pkg android.permission.WRITE_SECURE_SETTINGS\n")
+            os.writeBytes("exit\n")
+            os.flush()
+            val exitCode = process.waitFor()
+            hasSecureSettingsPermission() || exitCode == 0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun getAdbCommand(): String {
+        return "adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+    }
+
+    fun isDirectSwitchAvailable(): Boolean {
+        return hasSecureSettingsPermission() || isKernelRootAvailable()
+    }
+
+    fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
+        // Strategy 1: Root command if user's device has Kernel root (KernelSU / Magisk / APatch)
+        if (tryRootSwitch(mode)) {
             refreshNetworkState()
-            return ToggleResult.DirectSuccess(mode, "Switched automatically via Root access")
+            return ToggleResult.DirectSuccess(mode, "Switched automatically via Kernel Root")
         }
 
-        // Strategy 2: WRITE_SECURE_SETTINGS if granted via ADB
-        if (trySecureSettingsSwitch(is5G)) {
+        // Strategy 2: WRITE_SECURE_SETTINGS if granted via ADB or Kernel
+        if (trySecureSettingsSwitch(mode)) {
             refreshNetworkState()
-            return ToggleResult.DirectSuccess(mode, "Switched automatically via Secure Settings")
+            return ToggleResult.DirectSuccess(mode, "Switched automatically via Secure Settings (ADB)")
         }
 
         // Strategy 3: TelephonyManager reflection
+        val is5G = mode == NetworkMode.FIVE_G
         if (tryReflectionSwitch(is5G)) {
             refreshNetworkState()
             return ToggleResult.DirectSuccess(mode, "Switched automatically via Telephony Manager")
@@ -147,12 +188,38 @@ class NetworkModeManager(private val context: Context) {
         return tryDirectSwitch(mode)
     }
 
-    private fun tryRootSwitch(is5G: Boolean): Boolean {
+    private fun tryRootSwitch(mode: NetworkMode): Boolean {
         return try {
-            val bitmask = if (is5G) PREFERRED_5G_NR else PREFERRED_4G_LTE
+            val bitmask = when (mode) {
+                NetworkMode.FIVE_G -> PREFERRED_5G_NR
+                NetworkMode.AUTO -> PREFERRED_5G_NR
+                NetworkMode.FOUR_G -> PREFERRED_4G_LTE
+            }
+            val modeVal = when (mode) {
+                NetworkMode.FIVE_G -> GLOBAL_MODE_5G
+                NetworkMode.AUTO -> GLOBAL_MODE_AUTO
+                NetworkMode.FOUR_G -> GLOBAL_MODE_4G
+            }
+
             val process = Runtime.getRuntime().exec("su")
             val os = DataOutputStream(process.outputStream)
-            os.writeBytes("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask\n")
+            val pkg = context.packageName
+
+            // Ensure WRITE_SECURE_SETTINGS is granted from kernel as well
+            os.writeBytes("pm grant $pkg android.permission.WRITE_SECURE_SETTINGS 2>/dev/null\n")
+
+            // Command telephony service across SIM slot 0, 1, and 2
+            for (sub in 0..2) {
+                os.writeBytes("cmd phone set-allowed-network-types-for-reason $sub 0 $bitmask 2>/dev/null\n")
+                os.writeBytes("cmd phone set-preferred-network-type $sub $modeVal 2>/dev/null\n")
+            }
+
+            // Write into Settings.Global across single and multi-SIM keys
+            os.writeBytes("settings put global preferred_network_mode $modeVal 2>/dev/null\n")
+            os.writeBytes("settings put global preferred_network_mode0 $modeVal 2>/dev/null\n")
+            os.writeBytes("settings put global preferred_network_mode1 $modeVal 2>/dev/null\n")
+            os.writeBytes("settings put global preferred_network_mode2 $modeVal 2>/dev/null\n")
+
             os.writeBytes("exit\n")
             os.flush()
             val exitCode = process.waitFor()
@@ -162,11 +229,27 @@ class NetworkModeManager(private val context: Context) {
         }
     }
 
-    private fun trySecureSettingsSwitch(is5G: Boolean): Boolean {
+    private fun trySecureSettingsSwitch(mode: NetworkMode): Boolean {
+        if (!hasSecureSettingsPermission()) return false
         return try {
-            val modeVal = if (is5G) GLOBAL_MODE_5G else GLOBAL_MODE_4G
-            Settings.Global.putInt(context.contentResolver, "preferred_network_mode", modeVal)
-            Settings.Global.putInt(context.contentResolver, "preferred_network_mode0", modeVal)
+            val modeVal = when (mode) {
+                NetworkMode.FIVE_G -> GLOBAL_MODE_5G
+                NetworkMode.AUTO -> GLOBAL_MODE_AUTO
+                NetworkMode.FOUR_G -> GLOBAL_MODE_4G
+            }
+            val resolver = context.contentResolver
+            Settings.Global.putInt(resolver, "preferred_network_mode", modeVal)
+            Settings.Global.putInt(resolver, "preferred_network_mode0", modeVal)
+            Settings.Global.putInt(resolver, "preferred_network_mode1", modeVal)
+            Settings.Global.putInt(resolver, "preferred_network_mode2", modeVal)
+
+            try {
+                val sm = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+                sm?.activeSubscriptionInfoList?.forEach { subInfo ->
+                    Settings.Global.putInt(resolver, "preferred_network_mode${subInfo.subscriptionId}", modeVal)
+                }
+            } catch (_: Exception) {}
+
             true
         } catch (_: Exception) {
             false

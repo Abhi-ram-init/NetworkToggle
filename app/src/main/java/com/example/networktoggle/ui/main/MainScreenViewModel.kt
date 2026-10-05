@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed class SwitchStatus {
     object Idle : SwitchStatus()
@@ -29,6 +30,9 @@ data class MainScreenUiState(
     val selectedChoice: NetworkMode = NetworkMode.FIVE_G,
     val switchStatus: SwitchStatus = SwitchStatus.Idle,
     val uiStyle: com.example.networktoggle.network.AppUiStyle = com.example.networktoggle.network.AppUiStyle.CYBER_NEON,
+    val isDirectToggleGranted: Boolean = false,
+    val isKernelRootDetected: Boolean = false,
+    val adbGrantCommand: String = "",
 ) {
     // Current truthful display mode: driven strictly by live hardware connection
     val currentConnectedMode: NetworkMode
@@ -44,7 +48,10 @@ class MainScreenViewModel(
             liveNetwork = networkModeManager.detectCurrentNetwork(),
             hasPermission = networkModeManager.hasPermission(),
             selectedChoice = networkModeManager.getSavedMode(),
-            uiStyle = networkModeManager.getSavedUiStyle()
+            uiStyle = networkModeManager.getSavedUiStyle(),
+            isDirectToggleGranted = networkModeManager.hasSecureSettingsPermission(),
+            isKernelRootDetected = networkModeManager.isKernelRootAvailable(),
+            adbGrantCommand = networkModeManager.getAdbCommand()
         )
     )
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
@@ -82,6 +89,7 @@ class MainScreenViewModel(
 
     fun onAppResumed() {
         refreshPermission()
+        refreshDirectPermissions()
         val currentStatus = _uiState.value.switchStatus
         if (currentStatus is SwitchStatus.Switching) {
             viewModelScope.launch {
@@ -113,6 +121,34 @@ class MainScreenViewModel(
             }
         } else {
             networkModeManager.refreshNetworkState()
+        }
+    }
+
+    fun refreshDirectPermissions() {
+        val granted = networkModeManager.hasSecureSettingsPermission()
+        val isRoot = networkModeManager.isKernelRootAvailable()
+        _uiState.update {
+            it.copy(
+                isDirectToggleGranted = granted,
+                isKernelRootDetected = isRoot,
+                adbGrantCommand = networkModeManager.getAdbCommand()
+            )
+        }
+    }
+
+    fun requestKernelRootGrant(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val granted = networkModeManager.requestKernelPermission()
+            val root = networkModeManager.isKernelRootAvailable()
+            _uiState.update {
+                it.copy(
+                    isDirectToggleGranted = granted,
+                    isKernelRootDetected = root
+                )
+            }
+            withContext(Dispatchers.Main) {
+                onResult(granted)
+            }
         }
     }
 
@@ -172,27 +208,13 @@ class MainScreenViewModel(
 
             val directResult = networkModeManager.tryDirectSwitch(targetMode)
             if (directResult is ToggleResult.DirectSuccess) {
-                delay(1500)
-                val live = networkModeManager.detectCurrentNetwork()
-                val matched = when (targetMode) {
-                    NetworkMode.FIVE_G -> live.is5G
-                    NetworkMode.FOUR_G -> live.is4G
-                    NetworkMode.AUTO -> live.is5G || live.is4G
-                }
-                if (matched) {
-                    networkModeManager.saveMode(targetMode)
-                    _uiState.update {
-                        it.copy(
-                            liveNetwork = live,
-                            switchStatus = SwitchStatus.Success(targetMode)
-                        )
-                    }
-                    return@launch
-                }
+                // Direct switch succeeded via Kernel Root or ADB WRITE_SECURE_SETTINGS!
+                // Start verification countdown directly without interrupting with settings menu:
+                startVerification(targetMode)
+                return@launch
             }
 
-            // If direct automated switch is blocked (non-rooted device) and context is provided:
-            // Open the Force Menu directly for the user without any dialogs!
+            // If direct switch is not possible (no root & no ADB permission), open RadioInfo for user action:
             if (context != null) {
                 networkModeManager.openRadioInfo(context)
             }
