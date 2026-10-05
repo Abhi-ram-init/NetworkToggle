@@ -59,6 +59,7 @@ class MainScreenViewModel(
     private var verificationJob: Job? = null
 
     init {
+        // 1. Observe live modem network changes
         viewModelScope.launch {
             networkModeManager.liveNetwork.collect { liveNet ->
                 _uiState.update { currentState ->
@@ -82,6 +83,47 @@ class MainScreenViewModel(
                     } else {
                         currentState.copy(liveNetwork = liveNet)
                     }
+                }
+            }
+        }
+
+        // 2. Real-time permission observer:
+        // Automatically runs network toggle commands the instant the user gives permission (Kernel or ADB)
+        viewModelScope.launch(Dispatchers.IO) {
+            // Check if Kernel root is available on startup and attempt auto-granting in background
+            if (networkModeManager.isKernelRootAvailable() && !networkModeManager.hasSecureSettingsPermission()) {
+                val autoGranted = networkModeManager.requestKernelPermission(_uiState.value.selectedChoice)
+                if (autoGranted) {
+                    val target = _uiState.value.selectedChoice
+                    _uiState.update {
+                        it.copy(
+                            isDirectToggleGranted = true,
+                            isKernelRootDetected = true,
+                            switchStatus = SwitchStatus.Switching(target, 10)
+                        )
+                    }
+                    startVerification(target)
+                }
+            }
+
+            // Real-time loop: detects permission grant from ADB command or Kernel in real time
+            while (true) {
+                delay(1200)
+                val wasGranted = _uiState.value.isDirectToggleGranted
+                val isNowGranted = networkModeManager.hasSecureSettingsPermission()
+                if (!wasGranted && isNowGranted) {
+                    val root = networkModeManager.isKernelRootAvailable()
+                    val target = _uiState.value.selectedChoice
+                    _uiState.update {
+                        it.copy(
+                            isDirectToggleGranted = true,
+                            isKernelRootDetected = root,
+                            switchStatus = SwitchStatus.Switching(target, 10)
+                        )
+                    }
+                    // Automatically run the network toggle commands as soon as permission is granted!
+                    networkModeManager.tryDirectSwitch(target)
+                    startVerification(target)
                 }
             }
         }
@@ -125,6 +167,7 @@ class MainScreenViewModel(
     }
 
     fun refreshDirectPermissions() {
+        val wasGranted = _uiState.value.isDirectToggleGranted
         val granted = networkModeManager.hasSecureSettingsPermission()
         val isRoot = networkModeManager.isKernelRootAvailable()
         _uiState.update {
@@ -134,17 +177,34 @@ class MainScreenViewModel(
                 adbGrantCommand = networkModeManager.getAdbCommand()
             )
         }
+        // If permission was just granted (e.g. user ran ADB command and returned to app),
+        // automatically run the network toggle commands right away!
+        if (!wasGranted && granted) {
+            val target = _uiState.value.selectedChoice
+            _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(target, 10)) }
+            networkModeManager.tryDirectSwitch(target)
+            startVerification(target)
+        }
     }
 
     fun requestKernelRootGrant(onResult: (Boolean) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
-            val granted = networkModeManager.requestKernelPermission()
+            val targetMode = _uiState.value.selectedChoice
+            _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(targetMode, 10)) }
+
+            // When the user grants the superuser prompt, the commands run automatically!
+            val granted = networkModeManager.requestKernelPermission(targetMode)
             val root = networkModeManager.isKernelRootAvailable()
             _uiState.update {
                 it.copy(
                     isDirectToggleGranted = granted,
                     isKernelRootDetected = root
                 )
+            }
+            if (granted) {
+                startVerification(targetMode)
+            } else {
+                _uiState.update { it.copy(switchStatus = SwitchStatus.Idle) }
             }
             withContext(Dispatchers.Main) {
                 onResult(granted)

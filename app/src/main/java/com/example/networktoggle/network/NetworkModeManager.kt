@@ -131,15 +131,42 @@ class NetworkModeManager(private val context: Context) {
         }
     }
 
-    fun requestKernelPermission(): Boolean {
+    fun requestKernelPermission(targetModeToApply: NetworkMode? = null): Boolean {
         return try {
             val pkg = context.packageName
             val process = Runtime.getRuntime().exec("su")
             val os = DataOutputStream(process.outputStream)
+            
+            // 1. Grant WRITE_SECURE_SETTINGS from the kernel
             os.writeBytes("pm grant $pkg android.permission.WRITE_SECURE_SETTINGS\n")
+            os.writeBytes("pm grant $pkg android.permission.DUMP 2>/dev/null\n")
+
+            // 2. Automatically execute network toggle commands if target mode provided
+            if (targetModeToApply != null) {
+                val bitmask = when (targetModeToApply) {
+                    NetworkMode.FIVE_G -> PREFERRED_5G_NR
+                    NetworkMode.AUTO -> PREFERRED_5G_NR
+                    NetworkMode.FOUR_G -> PREFERRED_4G_LTE
+                }
+                val modeVal = when (targetModeToApply) {
+                    NetworkMode.FIVE_G -> GLOBAL_MODE_5G
+                    NetworkMode.AUTO -> GLOBAL_MODE_AUTO
+                    NetworkMode.FOUR_G -> GLOBAL_MODE_4G
+                }
+                for (sub in 0..2) {
+                    os.writeBytes("cmd phone set-allowed-network-types-for-reason $sub 0 $bitmask 2>/dev/null\n")
+                    os.writeBytes("cmd phone set-preferred-network-type $sub $modeVal 2>/dev/null\n")
+                }
+                os.writeBytes("settings put global preferred_network_mode $modeVal 2>/dev/null\n")
+                os.writeBytes("settings put global preferred_network_mode0 $modeVal 2>/dev/null\n")
+                os.writeBytes("settings put global preferred_network_mode1 $modeVal 2>/dev/null\n")
+                os.writeBytes("settings put global preferred_network_mode2 $modeVal 2>/dev/null\n")
+            }
+
             os.writeBytes("exit\n")
             os.flush()
             val exitCode = process.waitFor()
+            refreshNetworkState()
             hasSecureSettingsPermission() || exitCode == 0
         } catch (_: Exception) {
             false

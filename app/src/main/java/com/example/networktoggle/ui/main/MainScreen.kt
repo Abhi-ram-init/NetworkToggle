@@ -106,7 +106,7 @@ fun MainScreen(
         viewModel.requestKernelRootGrant { granted ->
             Toast.makeText(
                 context,
-                if (granted) "⚡ Kernel permission granted! Direct 1-tap switching active."
+                if (granted) "⚡ Kernel permission granted! Automatically applied network switch."
                 else "Kernel root not detected or request denied.",
                 Toast.LENGTH_LONG
             ).show()
@@ -831,7 +831,7 @@ private fun DirectSwitchCard(
                 )
             } else {
                 Text(
-                    text = "Android sandbox restricts background toggling by default. Grant permission once via Kernel Root or an ADB command to enable seamless 1-tap toggling:",
+                    text = "Android blocks background toggling by default. Grant permission once via Kernel Root or an ADB command — commands will execute automatically the instant permission is given:",
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 11.sp,
                     lineHeight = 15.sp
@@ -856,7 +856,7 @@ private fun DirectSwitchCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (uiState.isKernelRootDetected) "⚡ GRANT VIA KERNEL (ROOT DETECTED)" else "⚡ TRY GRANT VIA KERNEL (ROOT)",
+                        text = if (uiState.isKernelRootDetected) "⚡ GRANT VIA KERNEL (AUTO-RUNS TOGGLE)" else "⚡ TRY GRANT VIA KERNEL (AUTO-RUNS)",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (uiState.isKernelRootDetected) Color.Black else Color.White
