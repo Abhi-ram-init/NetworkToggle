@@ -43,12 +43,13 @@ Switch between 3 distinct interface themes at any moment via the top bar:
 
 ## 📦 Download & Installation
 
-Ready-to-install debug APK is available in the repository:
-- 📁 [`apk/NetworkToggle-v1.0.apk`](apk/NetworkToggle-v1.0.apk)
+Ready-to-install debug APK is available directly in this repository:
+- 📱 **Latest Release:** [`apk/NetworkToggle-v1.4.apk`](apk/NetworkToggle-v1.4.apk)
+- 🔗 **Direct Latest Alias:** [`apk/NetworkToggle-latest.apk`](apk/NetworkToggle-latest.apk)
 
 ### Install via ADB:
 ```bash
-adb install -r apk/NetworkToggle-v1.0.apk
+adb install -r apk/NetworkToggle-v1.4.apk
 ```
 
 ---
