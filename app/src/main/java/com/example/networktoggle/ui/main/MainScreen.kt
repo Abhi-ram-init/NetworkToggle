@@ -172,17 +172,8 @@ private fun MainScreenContent(
     modifier: Modifier = Modifier,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
-    val primaryColor = when (uiState.uiStyle) {
-        AppUiStyle.MINIMAL_CLEAN -> if (is5G) Color(0xFF10B981) else Color(0xFF38BDF8)
-        AppUiStyle.CYBER_NEON -> if (is5G) Color(0xFF00F5D4) else Color(0xFF7B2CBF)
-        AppUiStyle.SPEEDOMETER -> if (is5G) Color(0xFFFF0055) else Color(0xFF00E5FF)
-    }
-
-    val bgColor = when (uiState.uiStyle) {
-        AppUiStyle.MINIMAL_CLEAN -> Color(0xFF0A0E17)
-        AppUiStyle.CYBER_NEON -> Color(0xFF07080D)
-        AppUiStyle.SPEEDOMETER -> Color(0xFF05070D)
-    }
+    val primaryColor = if (is5G) Color(0xFF10B981) else Color(0xFF38BDF8)
+    val bgColor = Color(0xFF0A0E17)
 
     Box(
         modifier = modifier
@@ -200,10 +191,8 @@ private fun MainScreenContent(
         ) {
             // Minimal Header Bar
             MinimalTopBar(
-                uiState = uiState,
                 primaryColor = primaryColor,
-                onRefresh = onRefresh,
-                onSetUiStyle = onSetUiStyle
+                onRefresh = onRefresh
             )
 
             // Permission Warning Pill (Compact & only if needed)
@@ -239,29 +228,11 @@ private fun MainScreenContent(
             Spacer(modifier = Modifier.height(14.dp))
 
             // Hero Connection Card
-            when (uiState.uiStyle) {
-                AppUiStyle.MINIMAL_CLEAN -> {
-                    MinimalHeroCard(
-                        uiState = uiState,
-                        primaryColor = primaryColor,
-                        onToggle = onToggleDial
-                    )
-                }
-                AppUiStyle.CYBER_NEON -> {
-                    CyberHeroCard(
-                        uiState = uiState,
-                        accentColor = primaryColor,
-                        onToggle = onToggleDial
-                    )
-                }
-                AppUiStyle.SPEEDOMETER -> {
-                    SpeedometerHeroCard(
-                        uiState = uiState,
-                        meterColor = primaryColor,
-                        onToggle = onToggleDial
-                    )
-                }
-            }
+            MinimalHeroCard(
+                uiState = uiState,
+                primaryColor = primaryColor,
+                onToggle = onToggleDial
+            )
 
             // Inline Status Feedback
             InlineStatusIndicator(
@@ -283,33 +254,71 @@ private fun MainScreenContent(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Clean Macro Hub
-            CleanMacroSection(
-                uiState = uiState,
-                accentColor = primaryColor,
-                onSelectMacro = onSelectMacro,
-                onRunMacro = onRunMacro,
-                onClearLogs = onClearMacroLogs
-            )
+            var isAdvancedExpanded by remember { mutableStateOf(false) }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF1E293B).copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isAdvancedExpanded = !isAdvancedExpanded }
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Advanced Tools",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                    Icon(
+                        imageVector = if (isAdvancedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "Expand",
+                        tint = Color.White
+                    )
+                }
+            }
 
-            // Clean Tiles & Widgets Hub
-            CleanWidgetsSection(
-                accentColor = primaryColor,
-                onRequestAddTile = onRequestAddControlPanelTile
-            )
+            AnimatedVisibility(
+                visible = isAdvancedExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
+                    Spacer(modifier = Modifier.height(18.dp))
 
-            Spacer(modifier = Modifier.height(18.dp))
+                    // Clean Macro Hub
+                    CleanMacroSection(
+                        uiState = uiState,
+                        accentColor = primaryColor,
+                        onSelectMacro = onSelectMacro,
+                        onRunMacro = onRunMacro,
+                        onClearLogs = onClearMacroLogs
+                    )
 
-            // Direct Hardware Tools & 1-Tap Toggle Setup
-            CleanToolsSection(
-                uiState = uiState,
-                accentColor = primaryColor,
-                onRequestKernelGrant = onRequestKernelGrant,
-                onOpenRadioInfo = onOpenRadioInfo,
-                onOpenSettings = onOpenSettings
-            )
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // Clean Tiles & Widgets Hub
+                    CleanWidgetsSection(
+                        accentColor = primaryColor,
+                        onRequestAddTile = onRequestAddControlPanelTile
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    // Direct Hardware Tools & 1-Tap Toggle Setup
+                    CleanToolsSection(
+                        uiState = uiState,
+                        accentColor = primaryColor,
+                        onRequestKernelGrant = onRequestKernelGrant,
+                        onOpenRadioInfo = onOpenRadioInfo,
+                        onOpenSettings = onOpenSettings
+                    )
+                }
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
         }
@@ -321,10 +330,8 @@ private fun MainScreenContent(
 // -------------------------------------------------------------
 @Composable
 private fun MinimalTopBar(
-    uiState: MainScreenUiState,
     primaryColor: Color,
     onRefresh: () -> Unit,
-    onSetUiStyle: (AppUiStyle) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -347,42 +354,13 @@ private fun MinimalTopBar(
             )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Minimal UI Style Switcher Pill
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color.White.copy(alpha = 0.06f),
-                modifier = Modifier.padding(end = 4.dp)
-            ) {
-                Row(modifier = Modifier.padding(2.dp)) {
-                    AppUiStyle.entries.forEach { style ->
-                        val isSelected = uiState.uiStyle == style
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) primaryColor.copy(alpha = 0.2f) else Color.Transparent,
-                            modifier = Modifier
-                                .clickable { onSetUiStyle(style) }
-                                .padding(horizontal = 6.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = style.label(),
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) primaryColor else Color.White.copy(alpha = 0.45f)
-                            )
-                        }
-                    }
-                }
-            }
-
-            IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    Icons.Default.Refresh,
-                    contentDescription = "Refresh",
-                    tint = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.size(16.dp)
-                )
-            }
+        IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
+            Icon(
+                Icons.Default.Refresh,
+                contentDescription = "Refresh",
+                tint = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -465,100 +443,6 @@ private fun MinimalHeroCard(
                     text = if (is5G) "Switch to 4G LTE" else "Switch to 5G NR",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color.Black
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CyberHeroCard(
-    uiState: MainScreenUiState,
-    accentColor: Color,
-    onToggle: () -> Unit,
-) {
-    val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
-    val isBusy = uiState.switchStatus is SwitchStatus.Switching
-    val dialScale by animateFloatAsState(targetValue = if (isBusy) 0.95f else 1f, animationSpec = spring(stiffness = Spring.StiffnessMediumLow), label = "cyberScale")
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .padding(vertical = 10.dp)
-            .scale(dialScale)
-            .size(190.dp)
-            .clip(CircleShape)
-            .background(Brush.radialGradient(listOf(accentColor.copy(alpha = 0.18f), Color.Transparent)))
-            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }, onClick = onToggle, enabled = !isBusy)
-    ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(160.dp)
-                .clip(CircleShape)
-                .border(BorderStroke(2.dp, accentColor.copy(alpha = 0.6f)), CircleShape)
-                .background(Color(0xFF0B0E17))
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.SignalCellularAlt, contentDescription = null, tint = accentColor, modifier = Modifier.size(28.dp))
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(text = uiState.currentConnectedMode.shortLabel(), fontSize = 42.sp, fontWeight = FontWeight.Black, color = accentColor)
-                Text(text = if (is5G) "NR STANDALONE" else "LTE ACTIVE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f), letterSpacing = 1.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SpeedometerHeroCard(
-    uiState: MainScreenUiState,
-    meterColor: Color,
-    onToggle: () -> Unit,
-) {
-    val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
-
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xFF0F1320),
-        border = BorderStroke(1.dp, meterColor.copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(18.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Speed, contentDescription = null, tint = meterColor, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = if (is5G) "TURBO 5G BANDWIDTH" else "STANDARD 4G BANDWIDTH",
-                    color = meterColor,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(text = if (is5G) "5G NR" else "4G LTE", fontSize = 38.sp, fontWeight = FontWeight.Black, color = Color.White)
-            Text(text = uiState.liveNetwork.displayName, fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Button(
-                onClick = onToggle,
-                colors = ButtonDefaults.buttonColors(containerColor = meterColor),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-            ) {
-                Text(
-                    text = if (is5G) "SWITCH TO 4G LTE" else "SWITCH TO 5G TURBO",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
                     color = Color.Black
                 )
             }
