@@ -41,7 +41,7 @@ data class MainScreenUiState(
     val hasPermission: Boolean = false,
     val selectedChoice: NetworkMode = NetworkMode.FIVE_G,
     val switchStatus: SwitchStatus = SwitchStatus.Idle,
-    val uiStyle: com.example.networktoggle.network.AppUiStyle = com.example.networktoggle.network.AppUiStyle.CYBER_NEON,
+    val uiStyle: com.example.networktoggle.network.AppUiStyle = com.example.networktoggle.network.AppUiStyle.MINIMAL_CLEAN,
     val isDirectToggleGranted: Boolean = false,
     val isKernelRootDetected: Boolean = false,
     val adbGrantCommand: String = "",

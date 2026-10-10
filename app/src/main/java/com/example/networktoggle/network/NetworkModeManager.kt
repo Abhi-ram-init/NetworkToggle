@@ -102,10 +102,10 @@ class NetworkModeManager(private val context: Context) {
     }
 
     fun getSavedUiStyle(): AppUiStyle {
-        return when (prefs.getString("selected_ui_style", AppUiStyle.CYBER_NEON.name)) {
-            AppUiStyle.MINIMAL_CLEAN.name -> AppUiStyle.MINIMAL_CLEAN
+        return when (prefs.getString("selected_ui_style", AppUiStyle.MINIMAL_CLEAN.name)) {
+            AppUiStyle.CYBER_NEON.name -> AppUiStyle.CYBER_NEON
             AppUiStyle.SPEEDOMETER.name -> AppUiStyle.SPEEDOMETER
-            else -> AppUiStyle.CYBER_NEON
+            else -> AppUiStyle.MINIMAL_CLEAN
         }
     }
 
