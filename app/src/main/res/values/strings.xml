@@ -2,6 +2,10 @@
 <resources>
     <string name="app_name">Network Toggle</string>
     <string name="tile_label">Network Mode</string>
+    <string name="macro_tile_label">5G Macro</string>
+    <string name="macro_tile_subtitle_idle">Tap to Optimize</string>
+    <string name="macro_tile_subtitle_running">Running Macro…</string>
+    <string name="macro_tile_subtitle_locked">5G Locked</string>
     <string name="widget_description">Toggle between 5G and 4G directly from your home screen</string>
     <string name="widget_compact_description">Compact 1x1 circular quick toggle widget</string>
     <string name="widget_dashboard_description">Multi-option network dashboard with direct 5G, Auto, 4G, and Force Menu buttons</string>

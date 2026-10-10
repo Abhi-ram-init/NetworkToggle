@@ -91,12 +91,24 @@
                 android:resource="@xml/dashboard_widget_info" />
         </receiver>
 
-        <!-- Quick Settings Tile -->
+        <!-- Quick Settings Tile 1: Network Mode Toggle -->
         <service
             android:name=".tile.NetworkToggleTileService"
             android:exported="true"
             android:icon="@drawable/ic_network_5g"
             android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Quick Settings Tile 2: Macro Optimizer Tile (Control Panel Widget) -->
+        <service
+            android:name=".tile.NetworkMacroTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_macro_tile"
+            android:label="@string/macro_tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

@@ -1,12 +1,24 @@
 package com.example.networktoggle.ui.main
 
+import android.app.StatusBarManager
+import android.content.ComponentName
 import android.content.Context
+import android.graphics.drawable.Icon
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.networktoggle.R
+import com.example.networktoggle.macro.MacroExecutionState
+import com.example.networktoggle.macro.MacroLogEntry
+import com.example.networktoggle.macro.MacroManager
+import com.example.networktoggle.macro.MacroType
+import com.example.networktoggle.macro.ProcessTelephonyInfo
 import com.example.networktoggle.network.DetectedNetwork
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.network.NetworkModeManager
 import com.example.networktoggle.network.ToggleResult
+import com.example.networktoggle.tile.NetworkMacroTileService
+import com.example.networktoggle.tile.NetworkToggleTileService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,6 +45,10 @@ data class MainScreenUiState(
     val isDirectToggleGranted: Boolean = false,
     val isKernelRootDetected: Boolean = false,
     val adbGrantCommand: String = "",
+    val selectedMacroType: MacroType = MacroType.TURBO_5G_LOCK,
+    val macroState: MacroExecutionState = MacroExecutionState.Idle,
+    val macroLogs: List<MacroLogEntry> = emptyList(),
+    val inspectedProcess: ProcessTelephonyInfo? = null,
 ) {
     // Current truthful display mode: driven strictly by live hardware connection
     val currentConnectedMode: NetworkMode
@@ -41,6 +57,7 @@ data class MainScreenUiState(
 
 class MainScreenViewModel(
     private val networkModeManager: NetworkModeManager,
+    private val macroManager: MacroManager? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -51,7 +68,8 @@ class MainScreenViewModel(
             uiStyle = networkModeManager.getSavedUiStyle(),
             isDirectToggleGranted = networkModeManager.hasSecureSettingsPermission(),
             isKernelRootDetected = networkModeManager.isKernelRootAvailable(),
-            adbGrantCommand = networkModeManager.getAdbCommand()
+            adbGrantCommand = networkModeManager.getAdbCommand(),
+            inspectedProcess = macroManager?.lastInspectedProcess?.value
         )
     )
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
@@ -124,6 +142,25 @@ class MainScreenViewModel(
                     // Automatically run the network toggle commands as soon as permission is granted!
                     networkModeManager.tryDirectSwitch(target)
                     startVerification(target)
+                }
+            }
+        }
+
+        // 3. Observe Macro Manager streams
+        macroManager?.let { mm ->
+            viewModelScope.launch {
+                mm.logs.collect { logs ->
+                    _uiState.update { it.copy(macroLogs = logs) }
+                }
+            }
+            viewModelScope.launch {
+                mm.macroState.collect { state ->
+                    _uiState.update { it.copy(macroState = state) }
+                }
+            }
+            viewModelScope.launch {
+                mm.lastInspectedProcess.collect { proc ->
+                    _uiState.update { it.copy(inspectedProcess = proc) }
                 }
             }
         }
@@ -352,5 +389,68 @@ class MainScreenViewModel(
 
     fun refreshLiveNetwork() {
         networkModeManager.refreshNetworkState()
+    }
+
+    fun selectMacroType(type: MacroType) {
+        _uiState.update { it.copy(selectedMacroType = type) }
+    }
+
+    fun runSelectedMacro() {
+        val type = _uiState.value.selectedMacroType
+        viewModelScope.launch {
+            macroManager?.executeMacro(type)
+        }
+    }
+
+    fun clearMacroLogs() {
+        macroManager?.clearLogs()
+    }
+
+    fun getFormattedMacroLogs(): String {
+        return macroManager?.getFormattedLogs() ?: ""
+    }
+
+    fun inspectProcess() {
+        val info = macroManager?.inspectProcessAndTelephony()
+        _uiState.update { it.copy(inspectedProcess = info) }
+    }
+
+    fun requestAddTileToControlPanel(
+        isMacroTile: Boolean,
+        context: Context,
+        onResult: (String) -> Unit
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val sbm = context.getSystemService(StatusBarManager::class.java)
+            val component = if (isMacroTile) {
+                ComponentName(context, NetworkMacroTileService::class.java)
+            } else {
+                ComponentName(context, NetworkToggleTileService::class.java)
+            }
+            val label = if (isMacroTile) "5G Macro" else context.getString(R.string.tile_label)
+            val icon = Icon.createWithResource(
+                context,
+                if (isMacroTile) R.drawable.ic_macro_tile else R.drawable.ic_network_5g
+            )
+            sbm?.requestAddTileService(
+                component,
+                label,
+                icon,
+                context.mainExecutor
+            ) { result ->
+                val msg = when (result) {
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
+                        "✅ Added to Control Panel / Quick Settings!"
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
+                        "ℹ️ Tile is already in your Control Panel."
+                    StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
+                        "⚠️ Request dismissed. You can add it anytime from Edit Tiles."
+                    else -> "Tile status updated."
+                }
+                onResult(msg)
+            } ?: onResult("⚠️ Control Panel manager not available.")
+        } else {
+            onResult("💡 Android 12 and below: Swipe down Control Panel twice, tap Edit (✏️), and drag the tile into your active shade.")
+        }
     }
 }

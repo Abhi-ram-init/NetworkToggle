@@ -30,14 +30,22 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import com.example.networktoggle.macro.LogLevel
+import com.example.networktoggle.macro.MacroExecutionState
+import com.example.networktoggle.macro.MacroLogEntry
+import com.example.networktoggle.macro.MacroManager
+import com.example.networktoggle.macro.MacroType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -67,11 +75,13 @@ fun MainScreen(
     modifier: Modifier = Modifier,
     viewModel: MainScreenViewModel = run {
         val context = LocalContext.current.applicationContext
+        val nmm = NetworkModeManager(context)
+        val mm = MacroManager(context, nmm)
         androidx.lifecycle.viewmodel.compose.viewModel(
             factory = object : androidx.lifecycle.ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                    MainScreenViewModel(NetworkModeManager(context)) as T
+                    MainScreenViewModel(nmm, mm) as T
             }
         )
     },
@@ -129,6 +139,14 @@ fun MainScreen(
         onOpenSettings = { viewModel.openMobileSettings(context) },
         onRefresh = viewModel::refreshLiveNetwork,
         onDismissStatus = viewModel::dismissStatus,
+        onSelectMacro = viewModel::selectMacroType,
+        onRunMacro = viewModel::runSelectedMacro,
+        onClearMacroLogs = viewModel::clearMacroLogs,
+        onRequestAddControlPanelTile = { isMacro ->
+            viewModel.requestAddTileToControlPanel(isMacro, context) { msg ->
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        },
         modifier = modifier
     )
 }
@@ -145,6 +163,10 @@ private fun MainScreenContent(
     onOpenSettings: () -> Unit,
     onRefresh: () -> Unit,
     onDismissStatus: () -> Unit,
+    onSelectMacro: (MacroType) -> Unit,
+    onRunMacro: () -> Unit,
+    onClearMacroLogs: () -> Unit,
+    onRequestAddControlPanelTile: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val bgColor = when (uiState.uiStyle) {
@@ -295,7 +317,11 @@ private fun MainScreenContent(
                         onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
-                        onDismissStatus = onDismissStatus
+                        onDismissStatus = onDismissStatus,
+                        onSelectMacro = onSelectMacro,
+                        onRunMacro = onRunMacro,
+                        onClearMacroLogs = onClearMacroLogs,
+                        onRequestAddControlPanelTile = onRequestAddControlPanelTile
                     )
                 }
                 AppUiStyle.MINIMAL_CLEAN -> {
@@ -306,7 +332,11 @@ private fun MainScreenContent(
                         onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
-                        onDismissStatus = onDismissStatus
+                        onDismissStatus = onDismissStatus,
+                        onSelectMacro = onSelectMacro,
+                        onRunMacro = onRunMacro,
+                        onClearMacroLogs = onClearMacroLogs,
+                        onRequestAddControlPanelTile = onRequestAddControlPanelTile
                     )
                 }
                 AppUiStyle.SPEEDOMETER -> {
@@ -317,7 +347,11 @@ private fun MainScreenContent(
                         onRequestKernelGrant = onRequestKernelGrant,
                         onOpenRadioInfo = onOpenRadioInfo,
                         onOpenSettings = onOpenSettings,
-                        onDismissStatus = onDismissStatus
+                        onDismissStatus = onDismissStatus,
+                        onSelectMacro = onSelectMacro,
+                        onRunMacro = onRunMacro,
+                        onClearMacroLogs = onClearMacroLogs,
+                        onRequestAddControlPanelTile = onRequestAddControlPanelTile
                     )
                 }
             }
@@ -337,6 +371,10 @@ private fun CyberNeonUi(
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
+    onSelectMacro: (MacroType) -> Unit,
+    onRunMacro: () -> Unit,
+    onClearMacroLogs: () -> Unit,
+    onRequestAddControlPanelTile: (Boolean) -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
     val isFailed = uiState.switchStatus is SwitchStatus.Failed
@@ -429,6 +467,20 @@ private fun CyberNeonUi(
             onOpenRadioInfo = onOpenRadioInfo,
             onOpenSettings = onOpenSettings,
         )
+
+        MacroControlSection(
+            uiState = uiState,
+            onSelectMacro = onSelectMacro,
+            onRunMacro = onRunMacro,
+            onClearLogs = onClearMacroLogs,
+            accentColor = animatedAccent
+        )
+
+        ControlPanelWidgetsSection(
+            onRequestAddTile = onRequestAddControlPanelTile,
+            accentColor = animatedAccent
+        )
+
         WidgetOptionsSection()
     }
 }
@@ -445,6 +497,10 @@ private fun MinimalCleanUi(
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
+    onSelectMacro: (MacroType) -> Unit,
+    onRunMacro: () -> Unit,
+    onClearMacroLogs: () -> Unit,
+    onRequestAddControlPanelTile: (Boolean) -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
     val primaryColor = if (is5G) Color(0xFF10B981) else Color(0xFF3B82F6)
@@ -520,6 +576,20 @@ private fun MinimalCleanUi(
             onOpenRadioInfo = onOpenRadioInfo,
             onOpenSettings = onOpenSettings,
         )
+
+        MacroControlSection(
+            uiState = uiState,
+            onSelectMacro = onSelectMacro,
+            onRunMacro = onRunMacro,
+            onClearLogs = onClearMacroLogs,
+            accentColor = primaryColor
+        )
+
+        ControlPanelWidgetsSection(
+            onRequestAddTile = onRequestAddControlPanelTile,
+            accentColor = primaryColor
+        )
+
         WidgetOptionsSection()
     }
 }
@@ -536,6 +606,10 @@ private fun SpeedometerUi(
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
+    onSelectMacro: (MacroType) -> Unit,
+    onRunMacro: () -> Unit,
+    onClearMacroLogs: () -> Unit,
+    onRequestAddControlPanelTile: (Boolean) -> Unit,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
     val meterColor = if (is5G) Color(0xFFFF0055) else Color(0xFF00E5FF)
@@ -625,6 +699,20 @@ private fun SpeedometerUi(
             onOpenRadioInfo = onOpenRadioInfo,
             onOpenSettings = onOpenSettings,
         )
+
+        MacroControlSection(
+            uiState = uiState,
+            onSelectMacro = onSelectMacro,
+            onRunMacro = onRunMacro,
+            onClearLogs = onClearMacroLogs,
+            accentColor = meterColor
+        )
+
+        ControlPanelWidgetsSection(
+            onRequestAddTile = onRequestAddControlPanelTile,
+            accentColor = meterColor
+        )
+
         WidgetOptionsSection()
     }
 }
@@ -1087,5 +1175,471 @@ private fun pinWidgetToHomeScreen(context: android.content.Context, widgetClass:
         }
     } else {
         Toast.makeText(context, "Long-press your home screen to place this widget", Toast.LENGTH_LONG).show()
+    }
+}
+
+// -------------------------------------------------------------
+// MACRO EXECUTION & REAL-TIME PROCESS CONSOLE
+// -------------------------------------------------------------
+@Composable
+private fun MacroControlSection(
+    uiState: MainScreenUiState,
+    onSelectMacro: (MacroType) -> Unit,
+    onRunMacro: () -> Unit,
+    onClearLogs: () -> Unit,
+    accentColor: Color,
+) {
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = LocalContext.current
+    val isMacroRunning = uiState.macroState is MacroExecutionState.Running
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Spacer(modifier = Modifier.height(26.dp))
+
+        // Section Title
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Terminal,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "PROCESS-AWARE NETWORK MACRO",
+                    color = Color.White.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF10B981).copy(alpha = 0.15f),
+                border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+            ) {
+                Text(
+                    text = "LIVE SYSTEM READ",
+                    color = Color(0xFF10B981),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Diagnostic Telephony Process Inspection Card
+        val proc = uiState.inspectedProcess
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF0D111D),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "MONITORED TELEPHONY PROCESS",
+                            color = Color.White.copy(alpha = 0.45f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "com.android.phone",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = "PID: ${proc?.phonePid ?: "ACTIVE"} • ${proc?.processState ?: "RUNNING"}",
+                            color = Color(0xFF10B981),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(text = "Carrier", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+                        Text(
+                            text = proc?.carrierName ?: uiState.liveNetwork.displayName,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Column {
+                        Text(text = "SIM Slot", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+                        Text(
+                            text = "Slot 0 (SubId: ${proc?.activeSubId ?: 1})",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Column {
+                        Text(text = "Signal Level", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+                        Text(
+                            text = proc?.signalDbm ?: "-82 dBm",
+                            color = Color(0xFF00F5D4),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Macro Preset Selector
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MacroType.entries.forEach { type ->
+                val isSelected = uiState.selectedMacroType == type
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) accentColor.copy(alpha = 0.15f) else Color(0xFF121520),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) accentColor else Color.White.copy(alpha = 0.08f)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelectMacro(type) }
+                ) {
+                    Column(
+                        modifier = Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(text = type.icon, fontSize = 16.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = when (type) {
+                                MacroType.TURBO_5G_LOCK -> "5G Lock"
+                                MacroType.TOWER_REFRESH -> "Reseat"
+                                MacroType.BATTERY_ECO_4G -> "Eco 4G"
+                            },
+                            color = if (isSelected) accentColor else Color.White.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = uiState.selectedMacroType.shortDesc,
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Macro Run Button
+        Button(
+            onClick = onRunMacro,
+            enabled = !isMacroRunning,
+            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+        ) {
+            if (isMacroRunning) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    color = Color.Black,
+                    strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                val runningState = uiState.macroState as? MacroExecutionState.Running
+                Text(
+                    text = runningState?.step ?: "EXECUTING MACRO…",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.Black
+                )
+            } else {
+                Icon(
+                    Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "RUN ${uiState.selectedMacroType.displayName.uppercase()}",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.Black
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Live Terminal Console Box
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF07090F),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                // Console Toolbar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (isMacroRunning) Color(0xFFF59E0B) else Color(0xFF10B981))
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "TERMINAL CONSOLE",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+
+                    Row {
+                        Text(
+                            text = "COPY",
+                            color = accentColor,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable {
+                                    val fullLog = uiState.macroLogs.joinToString("\n") {
+                                        "[${it.timestamp}] [${it.level.name}] ${it.message}"
+                                    }
+                                    if (fullLog.isNotBlank()) {
+                                        clipboardManager.setText(AnnotatedString(fullLog))
+                                        Toast.makeText(context, "Terminal logs copied!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "CLEAR",
+                            color = Color.White.copy(alpha = 0.4f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .clickable { onClearLogs() }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Console Content (Scrollable)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 60.dp, max = 180.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    if (uiState.macroLogs.isEmpty()) {
+                        Text(
+                            text = "Console ready. Click RUN to inspect com.android.phone and execute automated radio routine…",
+                            color = Color.White.copy(alpha = 0.35f),
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            uiState.macroLogs.forEach { log ->
+                                val levelColor = when (log.level) {
+                                    LogLevel.PROCESS -> Color(0xFF38BDF8)
+                                    LogLevel.EXEC -> Color(0xFFF59E0B)
+                                    LogLevel.SUCCESS -> Color(0xFF10B981)
+                                    LogLevel.WARN -> Color(0xFFFB923C)
+                                    LogLevel.ERROR -> Color(0xFFEF4444)
+                                    LogLevel.INFO -> Color.White.copy(alpha = 0.7f)
+                                }
+                                Row {
+                                    Text(
+                                        text = "[${log.timestamp}] ",
+                                        color = Color.White.copy(alpha = 0.35f),
+                                        fontSize = 10.sp
+                                    )
+                                    Text(
+                                        text = log.message,
+                                        color = levelColor,
+                                        fontSize = 10.sp,
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// CONTROL PANEL / QUICK SETTINGS WIDGETS SECTION
+// -------------------------------------------------------------
+@Composable
+private fun ControlPanelWidgetsSection(
+    onRequestAddTile: (Boolean) -> Unit,
+    accentColor: Color,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Spacer(modifier = Modifier.height(26.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Default.Tune,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "CONTROL PANEL / QUICK SETTINGS TILES",
+                color = Color.White.copy(alpha = 0.45f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Tile 1: 5G/4G Mode Toggle
+            ControlPanelTileCard(
+                title = "Network Mode Toggle Tile",
+                subtitle = "Toggle 5G NR / 4G LTE with 1 tap from swipe-down notification shade",
+                badge = "5G / 4G",
+                badgeColor = Color(0xFF00F5D4),
+                onAdd = { onRequestAddTile(false) }
+            )
+
+            // Tile 2: 5G Macro Runner
+            ControlPanelTileCard(
+                title = "5G Macro Optimizer Tile",
+                subtitle = "Inspect telephony processes & lock 5G directly from Control Panel",
+                badge = "Macro Runner",
+                badgeColor = Color(0xFFA855F7),
+                onAdd = { onRequestAddTile(true) }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = "💡 Android 13+ prompts 1-tap addition. On older versions or custom skins (MIUI/HyperOS, ColorOS), swipe down Control Panel twice, tap the pencil icon (Edit), and drag the tile into your active grid.",
+            color = Color.White.copy(alpha = 0.45f),
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
+    }
+}
+
+@Composable
+private fun ControlPanelTileCard(
+    title: String,
+    subtitle: String,
+    badge: String,
+    badgeColor: Color,
+    onAdd: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF13151F),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = badgeColor.copy(alpha = 0.15f),
+                border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.4f))
+            ) {
+                Text(
+                    text = badge,
+                    color = badgeColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = subtitle, color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Button(
+                onClick = onAdd,
+                colors = ButtonDefaults.buttonColors(containerColor = badgeColor),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(2.dp))
+                Text(text = "ADD", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.Black)
+            }
+        }
     }
 }

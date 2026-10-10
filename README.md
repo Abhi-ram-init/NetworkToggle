@@ -25,31 +25,40 @@ Switch between 3 distinct interface themes at any moment via the top bar:
 - 🎨 **Minimal Clean**: Modern Material 3 slate card layout (`#0F172A`) with tactile toggle button.
 - 🏎️ **Speedometer**: Curved bandwidth meter gauge with turbo toggle controls.
 
-### 📱 4. Three Home Screen Widget Options
+### 🤖 4. Process-Aware Network Macro & Real-Time Terminal Console
+- **Process Inspection**: Inspects the core Android telephony subsystem `com.android.phone` (reads active Process ID / PID, process execution state, carrier MCC/MNC, active SIM slot, and live dBm signal strength).
+- **Automated Macro Presets**:
+  - ⚡ **Turbo 5G Ultra-Lock**: Inspects modem process, flushes degraded cell cache, applies preferred 5G NR bitmask across SIM slots, and establishes carrier 5G SA/NSA handshake.
+  - 🛰️ **Cell Tower Reseat**: Drops degraded cellular tower anchors, cycles RF link, and forces connection re-registration to the strongest nearby cellular mast.
+  - 🌱 **Battery Saver 4G Eco**: Locks 4G LTE-only mode to immediately halt aggressive 5G millimeter-wave/sub-6 background band scanning.
+- **Interactive Live Terminal Console**: Streams real-time diagnostic output with timestamps and status tags (`[PROCESS]`, `[EXEC]`, `[SUCCESS]`); includes 1-tap **COPY LOGS** and **CLEAR** controls.
+
+### 🎛️ 5. Control Panel / Quick Settings Widgets
+- **Quick Settings Tile 1 (Network Mode Toggle)**: Direct 1-tap 5G/4G mode switcher in the pull-down notification / Control Panel shade.
+- **Quick Settings Tile 2 (5G Macro Optimizer)**: Dedicated tile to run the Turbo 5G Lock macro directly from your Control Panel without opening the app.
+- **1-Tap "Add to Control Panel"**: Native Android 13+ (API 33+) integration via `StatusBarManager.requestAddTileService` to add tiles with a single click, plus guided instructions for older versions and custom OEM skins (MIUI/HyperOS, ColorOS, OneUI).
+
+### 📱 6. Three Home Screen Widget Options
 - **1×1 Compact Quick-Toggle Widget**: Minimalist circular dial with live 5G/4G indicator; tap to toggle directly from home screen.
 - **2×1 Cyber Pill Widget**: Horizontal glassmorphism pill with live carrier connection text and a glowing "SWITCH" button.
 - **4×2 Multi-Option Dashboard Widget**: Full home screen console with direct mode selector chips (`5G NR`, `AUTO`, `4G LTE`), plus **Force Menu** and **Settings** shortcuts.
 - **In-App 1-Tap Widget Pinning**: Add any widget to your home screen directly from the in-app manager.
 
-### ⚡ 5. Additional Shortcuts
-- **Quick Settings Tile**: Pull down the notification panel and tap the "Network Mode" tile to switch modes.
+### ⚡ 7. Additional Shortcuts & Security
 - **App Launcher Shortcuts**: Long-press the app icon on the home screen for direct **"5G Mode"** and **"4G Mode"** actions.
-
-### 🔒 6. Cryptographic Permission Isolation
-- Declares custom permission `com.example.networktoggle.permission.CONTROL_NETWORK_TOGGLE` with `protectionLevel="signature"`.
-- Under Android's security sandbox, only applications signed with the identical cryptographic private key can hold this permission. **Zero third-party apps can intercept or trigger network controls.**
+- **Cryptographic Permission Isolation**: Custom `com.example.networktoggle.permission.CONTROL_NETWORK_TOGGLE` signature-level protection ensures zero unauthorized third-party apps can invoke toggles.
 
 ---
 
 ## 📦 Download & Installation
 
 Ready-to-install debug APK is available directly in this repository:
-- 📱 **Latest Release:** [`apk/NetworkToggle-v1.4.apk`](apk/NetworkToggle-v1.4.apk)
+- 📱 **Latest Release (v1.5):** [`apk/NetworkToggle-v1.5.apk`](apk/NetworkToggle-v1.5.apk)
 - 🔗 **Direct Latest Alias:** [`apk/NetworkToggle-latest.apk`](apk/NetworkToggle-latest.apk)
 
 ### Install via ADB:
 ```bash
-adb install -r apk/NetworkToggle-v1.4.apk
+adb install -r apk/NetworkToggle-v1.5.apk
 ```
 
 ---
