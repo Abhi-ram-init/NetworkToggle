@@ -16,4 +16,6 @@
     <string name="shortcut_disabled">Network Toggle is unavailable</string>
     <string name="perm_label">Exclusive Network Toggle Control</string>
     <string name="perm_description">Restricts network toggling controls exclusively to this app. No external application can access or invoke this permission.</string>
+    <string name="accessibility_service_label">Network Toggle Macro Gestures</string>
+    <string name="accessibility_service_description">Simulates clicks, taps, and swipe gestures on screen for automated macros without root access.</string>
 </resources>

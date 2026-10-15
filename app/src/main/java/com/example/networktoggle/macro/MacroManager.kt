@@ -31,6 +31,8 @@ enum class MacroActionType(val displayName: String, val icon: String) {
     CYCLE_DATA("Cycle Mobile Data", "🔁"),
     LAUNCH_RADIO_INFO("Open Force Menu (*#*#4636#*#*)", "⚙"),
     GO_HOME("Go to Home Screen", "🏠"),
+    SCREEN_TAP("Tap Screen", "👆"),
+    SCREEN_SWIPE("Swipe Screen", "👉"),
     CUSTOM_SHELL("Shell Command", "💻")
 }
 
@@ -237,6 +239,8 @@ class MacroManager(
             MacroActionType.CYCLE_DATA -> "Cycle Mobile Data"
             MacroActionType.LAUNCH_RADIO_INFO -> "Open Force Menu"
             MacroActionType.GO_HOME -> "Go to Home Screen"
+            MacroActionType.SCREEN_TAP -> "Tap Screen (${shellCmd.ifBlank { "Center" }})"
+            MacroActionType.SCREEN_SWIPE -> "Swipe Screen (${shellCmd.ifBlank { "Up" }})"
             MacroActionType.CUSTOM_SHELL -> "Execute Shell: ${shellCmd.take(20)}"
         }
         val step = MacroStep(
@@ -361,6 +365,34 @@ class MacroManager(
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
                         context.startActivity(homeIntent)
+                    }
+                }
+                MacroActionType.SCREEN_TAP -> {
+                    val coords = step.shellCommand.split(",").mapNotNull { it.trim().toFloatOrNull() }
+                    val x = if (coords.isNotEmpty()) coords[0] else 540f
+                    val y = if (coords.size > 1) coords[1] else 960f
+                    addLog(LogLevel.EXEC, "👆 Simulating screen tap at (${x.toInt()}, ${y.toInt()})...")
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.clickAt(x, y)
+                        delay(400)
+                    } else {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Tap skipped.")
+                    }
+                }
+                MacroActionType.SCREEN_SWIPE -> {
+                    val coords = step.shellCommand.split(",").mapNotNull { it.trim().toFloatOrNull() }
+                    val startX = if (coords.isNotEmpty()) coords[0] else 540f
+                    val startY = if (coords.size > 1) coords[1] else 1400f
+                    val endX = if (coords.size > 2) coords[2] else 540f
+                    val endY = if (coords.size > 3) coords[3] else 600f
+                    addLog(LogLevel.EXEC, "👉 Simulating swipe (${startX.toInt()}, ${startY.toInt()}) → (${endX.toInt()}, ${endY.toInt()})...")
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.swipe(startX, startY, endX, endY)
+                        delay(600)
+                    } else {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Swipe skipped.")
                     }
                 }
                 MacroActionType.CUSTOM_SHELL -> {

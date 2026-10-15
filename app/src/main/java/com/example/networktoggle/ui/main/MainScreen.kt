@@ -69,6 +69,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.networktoggle.macro.LogLevel
 import com.example.networktoggle.macro.MacroActionType
+import com.example.networktoggle.macro.MacroAccessibilityService
 import com.example.networktoggle.macro.MacroExecutionState
 import com.example.networktoggle.macro.MacroManager
 import com.example.networktoggle.macro.MacroStep
@@ -715,6 +716,10 @@ private fun CustomMacroSection(
     var isNewMacroNameInputVisible by remember { mutableStateOf(false) }
     var macroNameInput by remember { mutableStateOf("") }
     val isRunning = uiState.macroState is MacroExecutionState.Running
+    val context = LocalContext.current
+    val isAccessibilityActive = remember(uiState) {
+        MacroAccessibilityService.isAccessibilityEnabled(context)
+    }
 
     Surface(
         shape = RoundedCornerShape(20.dp),
@@ -758,6 +763,36 @@ private fun CustomMacroSection(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            if (!isAccessibilityActive) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF38BDF8).copy(alpha = 0.08f),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.2f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { MacroAccessibilityService.openAccessibilitySettings(context) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Enable Accessibility for screen clicks & gestures",
+                            fontSize = 11.sp,
+                            color = Color(0xFF38BDF8),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "ENABLE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF38BDF8)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // 1. RECORDING STATE ACTIVE
             if (uiState.isRecordingMacro) {
@@ -887,7 +922,24 @@ private fun CustomMacroSection(
                                 onClick = { onRecordAction(MacroActionType.GO_HOME, 0, "") },
                                 modifier = Modifier.weight(1f)
                             )
-                            Spacer(modifier = Modifier.weight(3f))
+                            RecordActionChip(
+                                label = "Tap Screen",
+                                icon = "👆",
+                                onClick = { onRecordAction(MacroActionType.SCREEN_TAP, 0, "540,960") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Swipe Up",
+                                icon = "👉",
+                                onClick = { onRecordAction(MacroActionType.SCREEN_SWIPE, 0, "540,1400,540,600") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Force Menu",
+                                icon = "⚙",
+                                onClick = { onRecordAction(MacroActionType.LAUNCH_RADIO_INFO, 0, "") },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
 
                         Spacer(modifier = Modifier.height(14.dp))

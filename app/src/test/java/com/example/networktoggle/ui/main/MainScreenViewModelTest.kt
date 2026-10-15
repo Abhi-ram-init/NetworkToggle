@@ -35,6 +35,9 @@ class MainScreenViewModelTest {
         assertTrue(actions.contains(MacroActionType.WAIT_DELAY))
         assertTrue(actions.contains(MacroActionType.CYCLE_DATA))
         assertTrue(actions.contains(MacroActionType.LAUNCH_RADIO_INFO))
+        assertTrue(actions.contains(MacroActionType.GO_HOME))
+        assertTrue(actions.contains(MacroActionType.SCREEN_TAP))
+        assertTrue(actions.contains(MacroActionType.SCREEN_SWIPE))
     }
 
     @Test
