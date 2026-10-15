@@ -876,6 +876,19 @@ private fun CustomMacroSection(
                                 modifier = Modifier.weight(1f)
                             )
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            RecordActionChip(
+                                label = "Go Home",
+                                icon = "🏠",
+                                onClick = { onRecordAction(MacroActionType.GO_HOME, 0, "") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(modifier = Modifier.weight(3f))
+                        }
 
                         Spacer(modifier = Modifier.height(14.dp))
 

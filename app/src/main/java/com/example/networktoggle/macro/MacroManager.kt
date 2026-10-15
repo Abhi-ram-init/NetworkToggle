@@ -2,6 +2,7 @@ package com.example.networktoggle.macro
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.provider.Settings
 import android.telephony.SubscriptionManager
@@ -27,8 +28,9 @@ enum class MacroActionType(val displayName: String, val icon: String) {
     SET_4G("Switch to 4G LTE", "📶"),
     SET_AUTO("Switch to Auto (5G/4G)", "🔄"),
     WAIT_DELAY("Wait Delay", "⏱"),
-    CYCLE_DATA("Cycle Mobile Data", "🔄"),
+    CYCLE_DATA("Cycle Mobile Data", "🔁"),
     LAUNCH_RADIO_INFO("Open Force Menu (*#*#4636#*#*)", "⚙"),
+    GO_HOME("Go to Home Screen", "🏠"),
     CUSTOM_SHELL("Shell Command", "💻")
 }
 
@@ -234,6 +236,7 @@ class MacroManager(
             MacroActionType.WAIT_DELAY -> "Wait ${delaySec}s"
             MacroActionType.CYCLE_DATA -> "Cycle Mobile Data"
             MacroActionType.LAUNCH_RADIO_INFO -> "Open Force Menu"
+            MacroActionType.GO_HOME -> "Go to Home Screen"
             MacroActionType.CUSTOM_SHELL -> "Execute Shell: ${shellCmd.take(20)}"
         }
         val step = MacroStep(
@@ -349,6 +352,17 @@ class MacroManager(
                     }
                     delay(500)
                 }
+                MacroActionType.GO_HOME -> {
+                    addLog(LogLevel.EXEC, "🏠 Going to Home Screen...")
+                    delay(200)
+                    withContext(Dispatchers.Main) {
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(homeIntent)
+                    }
+                }
                 MacroActionType.CUSTOM_SHELL -> {
                     if (step.shellCommand.isNotBlank() && networkModeManager.isKernelRootAvailable()) {
                         try {
@@ -373,6 +387,16 @@ class MacroManager(
             success = true,
             summary = "Completed $totalSteps steps in ${duration}s"
         )
+
+        // Always go to home screen after macro runs (user-requested behaviour)
+        withContext(Dispatchers.Main) {
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(homeIntent)
+        }
+
         return@withContext true
     }
 
