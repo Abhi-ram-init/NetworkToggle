@@ -8,11 +8,13 @@ import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.networktoggle.R
+import com.example.networktoggle.macro.MacroActionType
 import com.example.networktoggle.macro.MacroExecutionState
 import com.example.networktoggle.macro.MacroLogEntry
 import com.example.networktoggle.macro.MacroManager
-import com.example.networktoggle.macro.MacroType
+import com.example.networktoggle.macro.MacroStep
 import com.example.networktoggle.macro.ProcessTelephonyInfo
+import com.example.networktoggle.macro.RecordedMacro
 import com.example.networktoggle.network.DetectedNetwork
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.network.NetworkModeManager
@@ -45,12 +47,14 @@ data class MainScreenUiState(
     val isDirectToggleGranted: Boolean = false,
     val isKernelRootDetected: Boolean = false,
     val adbGrantCommand: String = "",
-    val selectedMacroType: MacroType = MacroType.TURBO_5G_LOCK,
+    val savedMacros: List<RecordedMacro> = emptyList(),
+    val isRecordingMacro: Boolean = false,
+    val recordingMacroName: String = "",
+    val currentlyRecordedSteps: List<MacroStep> = emptyList(),
     val macroState: MacroExecutionState = MacroExecutionState.Idle,
     val macroLogs: List<MacroLogEntry> = emptyList(),
     val inspectedProcess: ProcessTelephonyInfo? = null,
 ) {
-    // Current truthful display mode: driven strictly by live hardware connection
     val currentConnectedMode: NetworkMode
         get() = if (liveNetwork.is5G) NetworkMode.FIVE_G else NetworkMode.FOUR_G
 }
@@ -69,6 +73,7 @@ class MainScreenViewModel(
             isDirectToggleGranted = networkModeManager.hasSecureSettingsPermission(),
             isKernelRootDetected = networkModeManager.isKernelRootAvailable(),
             adbGrantCommand = networkModeManager.getAdbCommand(),
+            savedMacros = macroManager?.savedMacros?.value ?: emptyList(),
             inspectedProcess = macroManager?.lastInspectedProcess?.value
         )
     )
@@ -105,10 +110,8 @@ class MainScreenViewModel(
             }
         }
 
-        // 2. Real-time permission observer:
-        // Automatically runs network toggle commands the instant the user gives permission (Kernel or ADB)
+        // 2. Real-time permission observer: runs network toggle commands instant permission is granted
         viewModelScope.launch(Dispatchers.IO) {
-            // Check if Kernel root is available on startup and attempt auto-granting in background
             if (networkModeManager.isKernelRootAvailable() && !networkModeManager.hasSecureSettingsPermission()) {
                 val autoGranted = networkModeManager.requestKernelPermission(_uiState.value.selectedChoice)
                 if (autoGranted) {
@@ -124,7 +127,6 @@ class MainScreenViewModel(
                 }
             }
 
-            // Real-time loop: detects permission grant from ADB command or Kernel in real time
             while (true) {
                 delay(1200)
                 val wasGranted = _uiState.value.isDirectToggleGranted
@@ -139,7 +141,6 @@ class MainScreenViewModel(
                             switchStatus = SwitchStatus.Switching(target, 10)
                         )
                     }
-                    // Automatically run the network toggle commands as soon as permission is granted!
                     networkModeManager.tryDirectSwitch(target)
                     startVerification(target)
                 }
@@ -149,13 +150,28 @@ class MainScreenViewModel(
         // 3. Observe Macro Manager streams
         macroManager?.let { mm ->
             viewModelScope.launch {
+                mm.savedMacros.collect { macros ->
+                    _uiState.update { it.copy(savedMacros = macros) }
+                }
+            }
+            viewModelScope.launch {
                 mm.logs.collect { logs ->
                     _uiState.update { it.copy(macroLogs = logs) }
                 }
             }
             viewModelScope.launch {
                 mm.macroState.collect { state ->
-                    _uiState.update { it.copy(macroState = state) }
+                    val isRec = state is MacroExecutionState.Recording
+                    val recName = if (state is MacroExecutionState.Recording) state.macroName else ""
+                    val steps = if (state is MacroExecutionState.Recording) state.recordedSteps else emptyList()
+                    _uiState.update {
+                        it.copy(
+                            macroState = state,
+                            isRecordingMacro = isRec,
+                            recordingMacroName = recName,
+                            currentlyRecordedSteps = steps
+                        )
+                    }
                 }
             }
             viewModelScope.launch {
@@ -214,8 +230,6 @@ class MainScreenViewModel(
                 adbGrantCommand = networkModeManager.getAdbCommand()
             )
         }
-        // If permission was just granted (e.g. user ran ADB command and returned to app),
-        // automatically run the network toggle commands right away!
         if (!wasGranted && granted) {
             val target = _uiState.value.selectedChoice
             _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(target, 10)) }
@@ -229,7 +243,6 @@ class MainScreenViewModel(
             val targetMode = _uiState.value.selectedChoice
             _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(targetMode, 10)) }
 
-            // When the user grants the superuser prompt, the commands run automatically!
             val granted = networkModeManager.requestKernelPermission(targetMode)
             val root = networkModeManager.isKernelRootAvailable()
             _uiState.update {
@@ -262,9 +275,6 @@ class MainScreenViewModel(
         _uiState.update { it.copy(hasPermission = true) }
     }
 
-    /**
-     * User explicitly chooses a mode (5G NR, Auto, or 4G LTE)
-     */
     fun selectChoice(mode: NetworkMode) {
         _uiState.update { it.copy(selectedChoice = mode, switchStatus = SwitchStatus.Idle) }
     }
@@ -274,17 +284,11 @@ class MainScreenViewModel(
         _uiState.update { it.copy(uiStyle = style) }
     }
 
-    /**
-     * Executes the switch to the user's selected choice
-     */
     fun applySelectedSwitch(context: Context? = null) {
         val target = _uiState.value.selectedChoice
         executeSwitch(target, context)
     }
 
-    /**
-     * Quick toggle button
-     */
     fun toggleQuick(context: Context? = null) {
         val current = _uiState.value.currentConnectedMode
         val next = if (current == NetworkMode.FIVE_G) NetworkMode.FOUR_G else NetworkMode.FIVE_G
@@ -298,6 +302,16 @@ class MainScreenViewModel(
     }
 
     private fun executeSwitch(targetMode: NetworkMode, context: Context?) {
+        // If recording a macro, automatically capture this action!
+        if (macroManager?.isRecording == true) {
+            val action = when (targetMode) {
+                NetworkMode.FIVE_G -> MacroActionType.SET_5G
+                NetworkMode.FOUR_G -> MacroActionType.SET_4G
+                NetworkMode.AUTO -> MacroActionType.SET_AUTO
+            }
+            macroManager.recordAction(action)
+        }
+
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update {
                 it.copy(switchStatus = SwitchStatus.Switching(targetMode, 10))
@@ -305,18 +319,14 @@ class MainScreenViewModel(
 
             val directResult = networkModeManager.tryDirectSwitch(targetMode)
             if (directResult is ToggleResult.DirectSuccess) {
-                // Direct switch succeeded via Kernel Root or ADB WRITE_SECURE_SETTINGS!
-                // Start verification countdown directly without interrupting with settings menu:
                 startVerification(targetMode)
                 return@launch
             }
 
-            // If direct switch is not possible (no root & no ADB permission), open RadioInfo for user action:
             if (context != null) {
                 networkModeManager.openRadioInfo(context)
             }
 
-            // Start verification timeout countdown
             startVerification(targetMode)
         }
     }
@@ -349,7 +359,6 @@ class MainScreenViewModel(
                 }
             }
 
-            // Verification window finished: Failed to switch
             val finalLive = networkModeManager.detectCurrentNetwork()
             val matched = when (targetMode) {
                 NetworkMode.FIVE_G -> finalLive.is5G
@@ -380,6 +389,9 @@ class MainScreenViewModel(
     }
 
     fun openRadioInfo(context: Context) {
+        if (macroManager?.isRecording == true) {
+            macroManager.recordAction(MacroActionType.LAUNCH_RADIO_INFO)
+        }
         networkModeManager.openRadioInfo(context)
     }
 
@@ -391,14 +403,33 @@ class MainScreenViewModel(
         networkModeManager.refreshNetworkState()
     }
 
-    fun selectMacroType(type: MacroType) {
-        _uiState.update { it.copy(selectedMacroType = type) }
+    // -------------------------------------------------------------
+    // USER-DRIVEN MACRO RECORDING & EXECUTION
+    // -------------------------------------------------------------
+
+    fun startRecordingMacro(name: String = "") {
+        macroManager?.startRecording(name)
     }
 
-    fun runSelectedMacro() {
-        val type = _uiState.value.selectedMacroType
+    fun recordMacroAction(actionType: MacroActionType, delaySec: Int = 1, shellCmd: String = "") {
+        macroManager?.recordAction(actionType, delaySec, shellCmd)
+    }
+
+    fun finishRecordingMacro(name: String? = null) {
+        macroManager?.finishRecording(name)
+    }
+
+    fun cancelRecordingMacro() {
+        macroManager?.cancelRecording()
+    }
+
+    fun deleteMacro(macroId: String) {
+        macroManager?.deleteMacro(macroId)
+    }
+
+    fun runMacro(macro: RecordedMacro) {
         viewModelScope.launch {
-            macroManager?.executeMacro(type)
+            macroManager?.executeMacro(macro)
         }
     }
 
@@ -427,7 +458,7 @@ class MainScreenViewModel(
             } else {
                 ComponentName(context, NetworkToggleTileService::class.java)
             }
-            val label = if (isMacroTile) "5G Macro" else context.getString(R.string.tile_label)
+            val label = if (isMacroTile) "Network Macro" else context.getString(R.string.tile_label)
             val icon = Icon.createWithResource(
                 context,
                 if (isMacroTile) R.drawable.ic_macro_tile else R.drawable.ic_network_5g

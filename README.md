@@ -19,24 +19,21 @@ An Android application built with **Jetpack Compose**, **Material 3**, and hardw
 - **Modem Verification**: Never falsely claims a switch occurred until verified by hardware.
 - **Clean Inline Failure Indicator**: If a carrier or hardware restriction prevents switching, a subtle inline badge flags `🔴 Not Switched • Hardware is on 4G LTE` with direct 1-tap access to the Force Menu—**zero annoying pop-ups or modal dialogues**.
 
-### 🎨 3. Three Selectable UI Styles (Minimal Clean by Default)
-Switch between 3 distinct interface themes at any moment via the top bar:
-- 🎨 **Minimal Clean (Default)**: Modern, ultra-streamlined Material 3 slate card layout (`#0F172A`) with high-contrast typography, compact pill buttons, and distraction-free telemetry.
-- ⚡ **Cyber Neon**: Deep OLED pitch-black background (`#08090D`) with glowing circular gauge dial and glassmorphism cards.
-- 🏎️ **Speedometer**: Curved bandwidth meter gauge with turbo toggle controls.
+### 🎨 3. Minimal, Highly Interactive UI
+- **Clean OLED Design**: Deep pitch-dark layout (`#090D16`) with high-contrast typography, zero clutter, and distraction-free telemetry.
+- **Tactile Hero Toggle**: Large interactive toggle with spring-physics press feedback, fluid color transitions between 5G Emerald (`#10B981`) and 4G Cyan (`#06B6D4`), and real-time state feedback.
+- **Fluid 3-Way Mode Selector**: Segmented pill selector (`5G NR`, `Auto`, `4G LTE`) with instantaneous visual indication.
 
-### 🤖 4. Process-Aware Network Macro & Streamlined Diagnostics
-- **Process Inspection**: Inspects the core Android telephony subsystem `com.android.phone` (reads active Process ID / PID, process execution state, carrier MCC/MNC, active SIM slot, and live dBm signal strength).
-- **Automated Macro Presets**:
-  - ⚡ **Turbo 5G Ultra-Lock**: Inspects modem process, flushes degraded cell cache, applies preferred 5G NR bitmask across SIM slots, and establishes carrier 5G SA/NSA handshake.
-  - 🛰️ **Cell Tower Reseat**: Drops degraded cellular tower anchors, cycles RF link, and forces connection re-registration to the strongest nearby cellular mast.
-  - 🌱 **Battery Saver 4G Eco**: Locks 4G LTE-only mode to immediately halt aggressive 5G millimeter-wave/sub-6 background band scanning.
-- **Collapsible Live Terminal Console**: Clean 1-line live ticker when collapsed for zero distraction, expandable to full terminal diagnostics with timestamps, status tags (`[PROCESS]`, `[EXEC]`, `[SUCCESS]`), and 1-tap **COPY LOGS** and **CLEAR** controls.
+### ⏺ 4. Custom Macro Recorder (User-Driven, Zero Hardcoded Presets)
+- **Record Any Network Sequence**: Record custom sequences of network operations directly through the in-app recorder.
+- **Live Action Capture**: Actions performed in the app (switching to 5G, switching to 4G, adding delays, cycling mobile data, or launching RadioInfo) are captured in order into the macro.
+- **Macro Management**: Save named macros, play them back with step-by-step progress indication, or delete them anytime.
+- **Collapsible Terminal Trace**: Monospace diagnostic logs tucked away cleanly in a collapsible bottom sheet with Copy and Clear controls.
 
-### 🎛️ 5. Control Panel / Quick Settings Widgets
-- **Quick Settings Tile 1 (Network Mode Toggle)**: Direct 1-tap 5G/4G mode switcher in the pull-down notification / Control Panel shade.
-- **Quick Settings Tile 2 (5G Macro Optimizer)**: Dedicated tile to run the Turbo 5G Lock macro directly from your Control Panel without opening the app.
-- **1-Tap "Add to Control Panel"**: Native Android 13+ (API 33+) integration via `StatusBarManager.requestAddTileService` to add tiles with a single click, plus guided instructions for older versions and custom OEM skins (MIUI/HyperOS, ColorOS, OneUI).
+### 🎛️ 5. Control Panel / Quick Settings Integration
+- **Quick Settings Tile 1 (Network Mode Toggle)**: 1-tap 5G/4G mode switcher directly in your pull-down notification / Control Panel shade.
+- **Quick Settings Tile 2 (Custom Macro)**: Runs your primary recorded macro with 1 tap directly from the Control Panel without opening the app.
+- **1-Tap "Add to Control Panel"**: Native Android 13+ (API 33+) integration via `StatusBarManager.requestAddTileService` to add tiles with a single click.
 
 ### 📱 6. Three Home Screen Widget Options
 - **1×1 Compact Quick-Toggle Widget**: Minimalist circular dial with live 5G/4G indicator; tap to toggle directly from home screen.

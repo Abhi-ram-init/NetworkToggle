@@ -9,8 +9,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -19,9 +23,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,16 +34,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Widgets
@@ -64,10 +68,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.networktoggle.macro.LogLevel
+import com.example.networktoggle.macro.MacroActionType
 import com.example.networktoggle.macro.MacroExecutionState
 import com.example.networktoggle.macro.MacroManager
-import com.example.networktoggle.macro.MacroType
-import com.example.networktoggle.network.AppUiStyle
+import com.example.networktoggle.macro.MacroStep
+import com.example.networktoggle.macro.RecordedMacro
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.network.NetworkModeManager
 import com.example.networktoggle.widget.CompactToggleWidget
@@ -118,8 +123,8 @@ fun MainScreen(
         viewModel.requestKernelRootGrant { granted ->
             Toast.makeText(
                 context,
-                if (granted) "⚡ Kernel permission granted! Switch executed."
-                else "Kernel root request denied or not available.",
+                if (granted) "⚡ Root permission granted! Switch executed."
+                else "Root request denied or unavailable.",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -127,7 +132,6 @@ fun MainScreen(
 
     MainScreenContent(
         uiState = uiState,
-        onSetUiStyle = viewModel::setUiStyle,
         onSelectChoice = { mode ->
             viewModel.selectChoice(mode)
             viewModel.applySelectedSwitch(context)
@@ -141,8 +145,12 @@ fun MainScreen(
         onOpenSettings = { viewModel.openMobileSettings(context) },
         onRefresh = viewModel::refreshLiveNetwork,
         onDismissStatus = viewModel::dismissStatus,
-        onSelectMacro = viewModel::selectMacroType,
-        onRunMacro = viewModel::runSelectedMacro,
+        onStartRecording = viewModel::startRecordingMacro,
+        onRecordAction = viewModel::recordMacroAction,
+        onFinishRecording = viewModel::finishRecordingMacro,
+        onCancelRecording = viewModel::cancelRecordingMacro,
+        onDeleteMacro = viewModel::deleteMacro,
+        onRunMacro = viewModel::runMacro,
         onClearMacroLogs = viewModel::clearMacroLogs,
         onRequestAddControlPanelTile = { isMacro ->
             viewModel.requestAddTileToControlPanel(isMacro, context) { msg ->
@@ -156,7 +164,6 @@ fun MainScreen(
 @Composable
 private fun MainScreenContent(
     uiState: MainScreenUiState,
-    onSetUiStyle: (AppUiStyle) -> Unit,
     onSelectChoice: (NetworkMode) -> Unit,
     onToggleDial: () -> Unit,
     onRequestPermission: () -> Unit,
@@ -165,15 +172,19 @@ private fun MainScreenContent(
     onOpenSettings: () -> Unit,
     onRefresh: () -> Unit,
     onDismissStatus: () -> Unit,
-    onSelectMacro: (MacroType) -> Unit,
-    onRunMacro: () -> Unit,
+    onStartRecording: (String) -> Unit,
+    onRecordAction: (MacroActionType, Int, String) -> Unit,
+    onFinishRecording: (String?) -> Unit,
+    onCancelRecording: () -> Unit,
+    onDeleteMacro: (String) -> Unit,
+    onRunMacro: (RecordedMacro) -> Unit,
     onClearMacroLogs: () -> Unit,
     onRequestAddControlPanelTile: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
-    val primaryColor = if (is5G) Color(0xFF10B981) else Color(0xFF38BDF8)
-    val bgColor = Color(0xFF0A0E17)
+    val primaryColor = if (is5G) Color(0xFF10B981) else Color(0xFF06B6D4)
+    val bgColor = Color(0xFF090D16)
 
     Box(
         modifier = modifier
@@ -186,16 +197,17 @@ private fun MainScreenContent(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Minimal Header Bar
+            // Sleek Header
             MinimalTopBar(
                 primaryColor = primaryColor,
+                is5G = is5G,
                 onRefresh = onRefresh
             )
 
-            // Permission Warning Pill (Compact & only if needed)
+            // Permission Request Banner (clean & subtle)
             if (!uiState.hasPermission) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Surface(
@@ -206,35 +218,36 @@ private fun MainScreenContent(
                         .clickable { onRequestPermission() }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Enable phone permission for real-time 5G/4G detection",
+                            text = "Grant phone state permission for live 5G/4G telemetry",
                             color = Color(0xFF38BDF8),
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             modifier = Modifier.weight(1f)
                         )
                         Text(
                             text = "ENABLE",
                             color = Color(0xFF38BDF8),
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Hero Connection Card
-            MinimalHeroCard(
+            // Main Interactive Hero Toggle Card
+            InteractiveHeroCard(
                 uiState = uiState,
                 primaryColor = primaryColor,
+                is5G = is5G,
                 onToggle = onToggleDial
             )
 
-            // Inline Status Feedback
+            // Inline Verification / Switching Status Feedback
             InlineStatusIndicator(
                 status = uiState.switchStatus,
                 switchingColor = Color(0xFFF59E0B),
@@ -243,9 +256,9 @@ private fun MainScreenContent(
                 onDismissStatus = onDismissStatus
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
-            // Segmented Mode Selector
+            // Fluid 3-Pill Mode Selector
             SegmentedModeSelector(
                 selectedMode = uiState.selectedChoice,
                 accentColor = primaryColor,
@@ -254,85 +267,96 @@ private fun MainScreenContent(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            var isAdvancedExpanded by remember { mutableStateOf(false) }
-
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFF1E293B).copy(alpha = 0.5f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { isAdvancedExpanded = !isAdvancedExpanded }
+            // Quick Hardware Tools Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                OutlinedButton(
+                    onClick = onOpenRadioInfo,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
                 ) {
-                    Text(
-                        text = "Advanced Tools",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                    Icon(
-                        imageVector = if (isAdvancedExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = "Expand",
-                        tint = Color.White
-                    )
+                    Icon(Icons.Default.Tune, contentDescription = null, tint = primaryColor, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "Force Menu", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                OutlinedButton(
+                    onClick = onOpenSettings,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp)
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "SIM Settings", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
-            AnimatedVisibility(
-                visible = isAdvancedExpanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(22.dp))
 
-                    // Clean Macro Hub
-                    CleanMacroSection(
-                        uiState = uiState,
-                        accentColor = primaryColor,
-                        onSelectMacro = onSelectMacro,
-                        onRunMacro = onRunMacro,
-                        onClearLogs = onClearMacroLogs
-                    )
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // Clean Tiles & Widgets Hub
-                    CleanWidgetsSection(
-                        accentColor = primaryColor,
-                        onRequestAddTile = onRequestAddControlPanelTile
-                    )
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // Direct Hardware Tools & 1-Tap Toggle Setup
-                    CleanToolsSection(
-                        uiState = uiState,
-                        accentColor = primaryColor,
-                        onRequestKernelGrant = onRequestKernelGrant,
-                        onOpenRadioInfo = onOpenRadioInfo,
-                        onOpenSettings = onOpenSettings
-                    )
-                }
-            }
+            // Custom Macro Hub (Option to Record Macro, Zero pre-added macros)
+            CustomMacroSection(
+                uiState = uiState,
+                accentColor = primaryColor,
+                onStartRecording = onStartRecording,
+                onRecordAction = onRecordAction,
+                onFinishRecording = onFinishRecording,
+                onCancelRecording = onCancelRecording,
+                onDeleteMacro = onDeleteMacro,
+                onRunMacro = onRunMacro
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
+
+            // Control Panel & Widgets Section
+            WidgetsAndTilesSection(
+                accentColor = primaryColor,
+                onRequestAddTile = onRequestAddControlPanelTile
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Diagnostics Console (Collapsible at bottom)
+            DiagnosticsConsole(
+                uiState = uiState,
+                accentColor = primaryColor,
+                onClearLogs = onClearMacroLogs
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
 // -------------------------------------------------------------
-// COMPACT TOP BAR
+// TOP BAR
 // -------------------------------------------------------------
 @Composable
 private fun MinimalTopBar(
     primaryColor: Color,
+    is5G: Boolean,
     onRefresh: () -> Unit,
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val dotAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.4f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1000),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "dotAlpha"
+    )
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -341,618 +365,162 @@ private fun MinimalTopBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(8.dp)
+                    .size(9.dp)
                     .clip(CircleShape)
-                    .background(primaryColor)
+                    .background(primaryColor.copy(alpha = dotAlpha))
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Network Toggle",
-                fontSize = 15.sp,
+                fontSize = 17.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = Color.White,
+                letterSpacing = (-0.3).sp
             )
         }
 
-        IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-            Icon(
-                Icons.Default.Refresh,
-                contentDescription = "Refresh",
-                tint = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.size(16.dp)
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = primaryColor.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.25f))
+            ) {
+                Text(
+                    text = if (is5G) "5G ACTIVE" else "4G ACTIVE",
+                    color = primaryColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.8.sp,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            IconButton(
+                onClick = onRefresh,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Refresh,
+                    contentDescription = "Refresh Telemetry",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(17.dp)
+                )
+            }
         }
     }
 }
 
 // -------------------------------------------------------------
-// HERO CARDS (MINIMAL, CYBER, SPEEDOMETER)
+// INTERACTIVE HERO CARD (TACTILE TOGGLE)
 // -------------------------------------------------------------
 @Composable
-private fun MinimalHeroCard(
+private fun InteractiveHeroCard(
     uiState: MainScreenUiState,
     primaryColor: Color,
+    is5G: Boolean,
     onToggle: () -> Unit,
 ) {
-    val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
-    val isBusy = uiState.switchStatus is SwitchStatus.Switching
+    val carrier = uiState.inspectedProcess?.carrierName?.takeIf { it.isNotBlank() } ?: "Cellular Network"
+    val displayType = uiState.liveNetwork.displayName
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "heroScale"
+    )
 
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color(0xFF131926),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.07f)),
-        modifier = Modifier.fillMaxWidth()
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF111726),
+        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.2f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onToggle
+            )
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // Carrier & Live Telemetry Pill
+            Surface(
+                shape = RoundedCornerShape(30.dp),
+                color = Color.White.copy(alpha = 0.05f)
             ) {
-                Text(
-                    text = uiState.inspectedProcess?.carrierName?.uppercase() ?: "CELLULAR",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.45f),
-                    letterSpacing = 1.sp
-                )
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = primaryColor.copy(alpha = 0.12f)
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Icon(
+                        Icons.Default.SignalCellularAlt,
+                        contentDescription = null,
+                        tint = primaryColor,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = if (is5G) "NR STANDALONE" else "LTE HIGH-SPEED",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = primaryColor,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        text = "$carrier • $displayType",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.7f)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
+            // Big Bold Network Display
             Text(
-                text = uiState.currentConnectedMode.label(),
-                fontSize = 40.sp,
+                text = if (is5G) "5G NR" else "4G LTE",
+                fontSize = 44.sp,
                 fontWeight = FontWeight.Black,
-                color = Color.White
+                color = Color.White,
+                letterSpacing = (-1).sp
             )
 
             Text(
-                text = uiState.liveNetwork.displayName,
-                fontSize = 12.sp,
+                text = if (is5G) "High-Bandwidth Cellular Connection" else "Standard Power Cellular Connection",
+                fontSize = 11.sp,
                 color = Color.White.copy(alpha = 0.5f)
             )
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Button(
-                onClick = onToggle,
-                enabled = !isBusy,
-                colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                shape = RoundedCornerShape(14.dp),
+            // Tactile Switch Pill Button
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = primaryColor,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
             ) {
-                Text(
-                    text = if (is5G) "Switch to 4G LTE" else "Switch to 5G NR",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black
-                )
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// SEGMENTED MODE SELECTOR
-// -------------------------------------------------------------
-@Composable
-private fun SegmentedModeSelector(
-    selectedMode: NetworkMode,
-    accentColor: Color,
-    onSelectMode: (NetworkMode) -> Unit,
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF131722),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(modifier = Modifier.padding(4.dp)) {
-            listOf(
-                Triple(NetworkMode.FIVE_G, "5G NR", Color(0xFF00F5D4)),
-                Triple(NetworkMode.AUTO, "Auto", Color(0xFF38BDF8)),
-                Triple(NetworkMode.FOUR_G, "4G LTE", Color(0xFF818CF8))
-            ).forEach { (mode, label, _) ->
-                val isSelected = selectedMode == mode
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (isSelected) accentColor.copy(alpha = 0.18f) else Color.Transparent,
-                    border = if (isSelected) BorderStroke(1.dp, accentColor) else null,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { onSelectMode(mode) }
-                ) {
-                    Text(
-                        text = label,
-                        textAlign = TextAlign.Center,
-                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                        fontSize = 12.sp,
-                        color = if (isSelected) accentColor else Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.padding(vertical = 10.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// CLEAN MACRO SECTION
-// -------------------------------------------------------------
-@Composable
-private fun CleanMacroSection(
-    uiState: MainScreenUiState,
-    accentColor: Color,
-    onSelectMacro: (MacroType) -> Unit,
-    onRunMacro: () -> Unit,
-    onClearLogs: () -> Unit,
-) {
-    val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-    val isRunning = uiState.macroState is MacroExecutionState.Running
-    var isConsoleExpanded by remember { mutableStateOf(false) }
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF111520),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            // Header with process indicator
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Terminal, contentDescription = null, tint = accentColor, modifier = Modifier.size(15.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "AUTOMATED MACRO", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f), letterSpacing = 1.sp)
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF10B981).copy(alpha = 0.12f)
-                ) {
-                    Text(
-                        text = "PID: ${uiState.inspectedProcess?.phonePid ?: "ACTIVE"} • phone",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF10B981),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Macro Presets Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                MacroType.entries.forEach { type ->
-                    val isSelected = uiState.selectedMacroType == type
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (isSelected) accentColor.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.04f),
-                        border = if (isSelected) BorderStroke(1.dp, accentColor) else null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { onSelectMacro(type) }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = type.icon, fontSize = 12.sp)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = when (type) {
-                                    MacroType.TURBO_5G_LOCK -> "5G Lock"
-                                    MacroType.TOWER_REFRESH -> "Reseat"
-                                    MacroType.BATTERY_ECO_4G -> "Eco 4G"
-                                },
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) accentColor else Color.White.copy(alpha = 0.6f)
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = uiState.selectedMacroType.shortDesc,
-                fontSize = 11.sp,
-                color = Color.White.copy(alpha = 0.45f),
-                lineHeight = 14.sp
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Run Button
-            Button(
-                onClick = onRunMacro,
-                enabled = !isRunning,
-                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                shape = RoundedCornerShape(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(42.dp)
-            ) {
-                if (isRunning) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    val runningState = uiState.macroState as? MacroExecutionState.Running
-                    Text(text = runningState?.step ?: "EXECUTING…", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.Black)
-                } else {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "RUN ${uiState.selectedMacroType.displayName.uppercase()}", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.Black)
-                }
-            }
-
-            // Compact Log Strip & Expandable Console
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { isConsoleExpanded = !isConsoleExpanded },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val latestLog = uiState.macroLogs.lastOrNull()?.message ?: "Terminal ready"
-                Text(
-                    text = "▶ $latestLog",
-                    fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.5f),
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    text = if (isConsoleExpanded) "Hide" else "Console",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = accentColor
-                )
-            }
-
-            AnimatedVisibility(
-                visible = isConsoleExpanded,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut()
-            ) {
-                Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF07090F),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(text = "LOG TRACE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.4f))
-                                Row {
-                                    Text(
-                                        text = "COPY",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = accentColor,
-                                        modifier = Modifier.clickable {
-                                            val text = uiState.macroLogs.joinToString("\n") { "[${it.timestamp}] ${it.message}" }
-                                            clipboardManager.setText(AnnotatedString(text))
-                                            Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
-                                        }
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = "CLEAR",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White.copy(alpha = 0.4f),
-                                        modifier = Modifier.clickable { onClearLogs() }
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 140.dp)
-                                    .verticalScroll(rememberScrollState())
-                            ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    uiState.macroLogs.forEach { log ->
-                                        val color = when (log.level) {
-                                            LogLevel.SUCCESS -> Color(0xFF10B981)
-                                            LogLevel.EXEC -> Color(0xFFF59E0B)
-                                            LogLevel.PROCESS -> Color(0xFF38BDF8)
-                                            else -> Color.White.copy(alpha = 0.65f)
-                                        }
-                                        Text(text = "[${log.timestamp}] ${log.message}", fontSize = 9.sp, color = color, fontFamily = FontFamily.Monospace)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// CLEAN TILES & WIDGETS SECTION
-// -------------------------------------------------------------
-@Composable
-private fun CleanWidgetsSection(
-    accentColor: Color,
-    onRequestAddTile: (Boolean) -> Unit,
-) {
-    val context = LocalContext.current
-
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF111520),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Widgets, contentDescription = null, tint = accentColor, modifier = Modifier.size(15.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "TILES & WIDGETS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.5f), letterSpacing = 1.sp)
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Control Panel Tiles Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CompactAddButton(
-                    title = "Control Panel: Toggle",
-                    badge = "Tile",
-                    accentColor = Color(0xFF00F5D4),
-                    modifier = Modifier.weight(1f),
-                    onClick = { onRequestAddTile(false) }
-                )
-                CompactAddButton(
-                    title = "Control Panel: Macro",
-                    badge = "Tile",
-                    accentColor = Color(0xFFA855F7),
-                    modifier = Modifier.weight(1f),
-                    onClick = { onRequestAddTile(true) }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Home Screen Widgets Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CompactAddButton(
-                    title = "1x1 Dial",
-                    badge = "Home",
-                    accentColor = Color(0xFF38BDF8),
-                    modifier = Modifier.weight(1f),
-                    onClick = { pinWidgetToHomeScreen(context, CompactToggleWidget::class.java) }
-                )
-                CompactAddButton(
-                    title = "2x1 Pill",
-                    badge = "Home",
-                    accentColor = Color(0xFF38BDF8),
-                    modifier = Modifier.weight(1f),
-                    onClick = { pinWidgetToHomeScreen(context, NetworkToggleWidget::class.java) }
-                )
-                CompactAddButton(
-                    title = "4x2 Dash",
-                    badge = "Home",
-                    accentColor = Color(0xFF8B5CF6),
-                    modifier = Modifier.weight(1f),
-                    onClick = { pinWidgetToHomeScreen(context, DashboardToggleWidget::class.java) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactAddButton(
-    title: String,
-    badge: String,
-    accentColor: Color,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = Color.White.copy(alpha = 0.04f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = modifier.clickable { onClick() }
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = title, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
-                Text(text = badge, fontSize = 8.sp, color = accentColor)
-            }
-            Icon(Icons.Default.Add, contentDescription = null, tint = accentColor, modifier = Modifier.size(14.dp))
-        }
-    }
-}
-
-// -------------------------------------------------------------
-// CLEAN TOOLS & 1-TAP TOGGLE SETUP
-// -------------------------------------------------------------
-@Composable
-private fun CleanToolsSection(
-    uiState: MainScreenUiState,
-    accentColor: Color,
-    onRequestKernelGrant: () -> Unit,
-    onOpenRadioInfo: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    val clipboardManager = LocalClipboardManager.current
-    val context = LocalContext.current
-    var isSetupExpanded by remember { mutableStateOf(false) }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Force Menu Button
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF111520),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onOpenRadioInfo() }
-            ) {
                 Row(
-                    modifier = Modifier.padding(12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.FlashOn, contentDescription = null, tint = Color(0xFF00F5D4), modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(text = "Force Menu", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(text = "*#*#4636#*#*", fontSize = 9.sp, color = Color.White.copy(alpha = 0.45f))
-                    }
-                }
-            }
-
-            // SIM Settings Button
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFF111520),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { onOpenSettings() }
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFF818CF8), modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(text = "SIM Settings", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text(text = "Android System", fontSize = 9.sp, color = Color.White.copy(alpha = 0.45f))
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Direct Toggle Status / Setup Pill
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF111520),
-            border = BorderStroke(1.dp, if (uiState.isDirectToggleGranted) Color(0xFF10B981).copy(alpha = 0.3f) else Color.White.copy(alpha = 0.06f)),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { if (!uiState.isDirectToggleGranted) isSetupExpanded = !isSetupExpanded },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = if (uiState.isDirectToggleGranted) Icons.Default.CheckCircle else Icons.Default.Tune,
-                            contentDescription = null,
-                            tint = if (uiState.isDirectToggleGranted) Color(0xFF10B981) else Color(0xFFF59E0B),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (uiState.isDirectToggleGranted) "1-Tap Direct Toggle: Active" else "1-Tap Direct Toggle: Setup",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-
-                    if (!uiState.isDirectToggleGranted) {
-                        Icon(
-                            imageVector = if (isSetupExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.5f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                if (!uiState.isDirectToggleGranted && isSetupExpanded) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(
-                        text = "Grant permission once via Kernel Root or ADB to switch without opening menus:",
-                        fontSize = 10.sp,
-                        color = Color.White.copy(alpha = 0.5f)
+                    Icon(
+                        Icons.Default.FlashOn,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = onRequestKernelGrant,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f).height(36.dp)
-                        ) {
-                            Text(text = "Grant via Root", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
-                        }
-                        Button(
-                            onClick = {
-                                clipboardManager.setText(AnnotatedString(uiState.adbGrantCommand))
-                                Toast.makeText(context, "ADB command copied!", Toast.LENGTH_SHORT).show()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f).height(36.dp)
-                        ) {
-                            Text(text = "Copy ADB Command", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF00F5D4))
-                        }
-                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (is5G) "SWITCH TO 4G LTE" else "SWITCH TO 5G NR",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.Black,
+                        letterSpacing = 0.5.sp
+                    )
                 }
             }
         }
@@ -972,69 +540,761 @@ private fun InlineStatusIndicator(
 ) {
     AnimatedVisibility(
         visible = status !is SwitchStatus.Idle,
-        enter = fadeIn(),
-        exit = fadeOut()
+        enter = expandVertically() + fadeIn(),
+        exit = shrinkVertically() + fadeOut()
     ) {
-        when (status) {
-            is SwitchStatus.Switching -> {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = switchingColor.copy(alpha = 0.12f),
-                    modifier = Modifier.padding(top = 10.dp)
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(11.dp), strokeWidth = 2.dp, color = switchingColor)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Switching to ${status.targetMode.label()} (${status.remainingSeconds}s)", fontSize = 11.sp, color = switchingColor)
+        Column(modifier = Modifier.padding(top = 10.dp)) {
+            when (status) {
+                is SwitchStatus.Switching -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = switchingColor.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, switchingColor.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                color = switchingColor,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Verifying ${status.targetMode.label()} switch (${status.remainingSeconds}s)...",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = switchingColor,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                 }
-            }
-            is SwitchStatus.Success -> {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color(0xFF10B981).copy(alpha = 0.15f),
-                    modifier = Modifier
-                        .padding(top = 10.dp)
-                        .clickable { onDismissStatus() }
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Switched to ${status.mode.label()}", fontSize = 11.sp, color = Color(0xFF10B981), fontWeight = FontWeight.Bold)
+
+                is SwitchStatus.Success -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Switched to ${status.mode.label()} successfully",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF10B981),
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = onDismissStatus, modifier = Modifier.size(20.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
+                            }
+                        }
                     }
                 }
-            }
-            is SwitchStatus.Failed -> {
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = failedColor.copy(alpha = 0.15f),
-                    modifier = Modifier
-                        .padding(top = 10.dp)
-                        .clickable { onOpenRadioInfo() }
-                ) {
-                    Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Error, contentDescription = null, tint = failedColor, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Not Switched • On ${status.currentNetwork} (Tap for Force Menu)", fontSize = 11.sp, color = failedColor, fontWeight = FontWeight.Medium)
+
+                is SwitchStatus.Failed -> {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = failedColor.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, failedColor.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Hardware stayed on ${status.currentNetwork}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = failedColor,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "FORCE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier
+                                    .clickable { onOpenRadioInfo() }
+                                    .padding(4.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            IconButton(onClick = onDismissStatus, modifier = Modifier.size(20.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(13.dp))
+                            }
+                        }
                     }
                 }
+
+                SwitchStatus.Idle -> {}
             }
-            else -> Unit
         }
     }
 }
 
-private fun pinWidgetToHomeScreen(context: android.content.Context, widgetClass: Class<*>) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val appWidgetManager = AppWidgetManager.getInstance(context)
-        if (appWidgetManager.isRequestPinAppWidgetSupported) {
-            val provider = ComponentName(context, widgetClass)
-            appWidgetManager.requestPinAppWidget(provider, null, null)
-            Toast.makeText(context, "Adding widget to home screen…", Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(context, "Long-press your home screen to place this widget", Toast.LENGTH_LONG).show()
+// -------------------------------------------------------------
+// SEGMENTED MODE SELECTOR
+// -------------------------------------------------------------
+@Composable
+private fun SegmentedModeSelector(
+    selectedMode: NetworkMode,
+    accentColor: Color,
+    onSelectMode: (NetworkMode) -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF131926),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            val modes = listOf(
+                Triple(NetworkMode.FIVE_G, "5G NR", "⚡"),
+                Triple(NetworkMode.AUTO, "Auto", "🔄"),
+                Triple(NetworkMode.FOUR_G, "4G LTE", "📶")
+            )
+
+            modes.forEach { (mode, label, icon) ->
+                val isSelected = selectedMode == mode
+                val targetBg = if (isSelected) accentColor else Color.Transparent
+                val targetText = if (isSelected) Color.Black else Color.White.copy(alpha = 0.65f)
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = targetBg,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onSelectMode(mode) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = icon, fontSize = 12.sp)
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = label,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = targetText
+                        )
+                    }
+                }
+            }
         }
-    } else {
-        Toast.makeText(context, "Long-press your home screen to place this widget", Toast.LENGTH_LONG).show()
+    }
+}
+
+// -------------------------------------------------------------
+// CUSTOM MACRO HUB (USER RECORDED MACROS - ZERO PRE-ADDED)
+// -------------------------------------------------------------
+@Composable
+private fun CustomMacroSection(
+    uiState: MainScreenUiState,
+    accentColor: Color,
+    onStartRecording: (String) -> Unit,
+    onRecordAction: (MacroActionType, Int, String) -> Unit,
+    onFinishRecording: (String?) -> Unit,
+    onCancelRecording: () -> Unit,
+    onDeleteMacro: (String) -> Unit,
+    onRunMacro: (RecordedMacro) -> Unit,
+) {
+    var isNewMacroNameInputVisible by remember { mutableStateOf(false) }
+    var macroNameInput by remember { mutableStateOf("") }
+    val isRunning = uiState.macroState is MacroExecutionState.Running
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color(0xFF111726),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "⚡", fontSize = 14.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "CUSTOM MACROS",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White.copy(alpha = 0.6f),
+                        letterSpacing = 1.sp
+                    )
+                }
+
+                if (!uiState.isRecordingMacro) {
+                    Text(
+                        text = "+ Record",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = accentColor,
+                        modifier = Modifier
+                            .clickable {
+                                isNewMacroNameInputVisible = true
+                                macroNameInput = "Macro ${uiState.savedMacros.size + 1}"
+                            }
+                            .padding(4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 1. RECORDING STATE ACTIVE
+            if (uiState.isRecordingMacro) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFFEF4444).copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFFEF4444))
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "RECORDING: ${uiState.recordingMacroName}",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFFEF4444),
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Actions performed in the app or tapped below are recorded in order:",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Live Steps List
+                        if (uiState.currentlyRecordedSteps.isEmpty()) {
+                            Text(
+                                text = "No steps recorded yet. Tap any button below to add a step.",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.4f),
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                uiState.currentlyRecordedSteps.forEachIndexed { index, step ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.05f)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${index + 1}.",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White.copy(alpha = 0.4f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(text = step.actionType.icon, fontSize = 11.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = step.label,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Quick Step Adders
+                        Text(
+                            text = "Add Action Step:",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.45f)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            RecordActionChip(
+                                label = "5G Mode",
+                                icon = "⚡",
+                                onClick = { onRecordAction(MacroActionType.SET_5G, 1, "") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "4G Mode",
+                                icon = "📶",
+                                onClick = { onRecordAction(MacroActionType.SET_4G, 1, "") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Wait 1s",
+                                icon = "⏱",
+                                onClick = { onRecordAction(MacroActionType.WAIT_DELAY, 1, "") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Cycle Data",
+                                icon = "🔄",
+                                onClick = { onRecordAction(MacroActionType.CYCLE_DATA, 1, "") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Finish & Cancel Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { onFinishRecording(uiState.recordingMacroName) },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                            ) {
+                                Text(
+                                    text = "SAVE MACRO",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+
+                            OutlinedButton(
+                                onClick = onCancelRecording,
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White.copy(alpha = 0.7f)),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                                modifier = Modifier.height(40.dp)
+                            ) {
+                                Text(text = "CANCEL", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            } else {
+                // 2. NOT RECORDING: Show Record Button or Prompt Input
+                if (isNewMacroNameInputVisible) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White.copy(alpha = 0.04f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = "Name your custom macro:",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.6f)
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = macroNameInput,
+                                onValueChange = { macroNameInput = it },
+                                placeholder = { Text("e.g. 5G Ultra Boost", fontSize = 12.sp) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = accentColor,
+                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                )
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { isNewMacroNameInputVisible = false }) {
+                                    Text("Cancel", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Button(
+                                    onClick = {
+                                        isNewMacroNameInputVisible = false
+                                        onStartRecording(macroNameInput)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                                ) {
+                                    Text("Start Recording", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // 3. Saved Macros List (Clean, user-driven)
+                if (uiState.savedMacros.isEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White.copy(alpha = 0.03f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = "No custom macros recorded yet.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Automate your network switches by recording your custom action sequence.",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.4f),
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Button(
+                                onClick = {
+                                    isNewMacroNameInputVisible = true
+                                    macroNameInput = "Macro 1"
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            ) {
+                                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "RECORD MACRO",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        uiState.savedMacros.forEach { macro ->
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color.White.copy(alpha = 0.04f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = macro.name,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        val stepsSummary = macro.steps.joinToString(" → ") { it.label }
+                                        Text(
+                                            text = "${macro.steps.size} steps: $stepsSummary",
+                                            fontSize = 10.sp,
+                                            color = Color.White.copy(alpha = 0.5f),
+                                            maxLines = 1
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.width(8.dp))
+
+                                    // Play Button
+                                    Button(
+                                        onClick = { onRunMacro(macro) },
+                                        enabled = !isRunning,
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                        modifier = Modifier.height(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(text = "RUN", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                                    }
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+
+                                    // Delete Button
+                                    IconButton(
+                                        onClick = { onDeleteMacro(macro.id) },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Macro", tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordActionChip(
+    label: String,
+    icon: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color.White.copy(alpha = 0.08f),
+        modifier = modifier.clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(text = icon, fontSize = 10.sp)
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(text = label, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// CONTROL PANEL & WIDGETS SECTION
+// -------------------------------------------------------------
+@Composable
+private fun WidgetsAndTilesSection(
+    accentColor: Color,
+    onRequestAddTile: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = Color(0xFF111726),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Widgets, contentDescription = null, tint = accentColor, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "CONTROL PANEL & WIDGETS",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.6f),
+                    letterSpacing = 1.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { onRequestAddTile(false) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                ) {
+                    Text(text = "Add Control Tile", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            val awm = context.getSystemService(AppWidgetManager::class.java)
+                            val provider = ComponentName(context, CompactToggleWidget::class.java)
+                            if (awm != null && awm.isRequestPinAppWidgetSupported) {
+                                awm.requestPinAppWidget(provider, null, null)
+                                Toast.makeText(context, "Pinning widget to home screen...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Long-press home screen to add widget.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                ) {
+                    Text(text = "Add Home Widget", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// COLLAPSIBLE DIAGNOSTICS CONSOLE
+// -------------------------------------------------------------
+@Composable
+private fun DiagnosticsConsole(
+    uiState: MainScreenUiState,
+    accentColor: Color,
+    onClearLogs: () -> Unit,
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF111726),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isExpanded = !isExpanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Terminal, contentDescription = null, tint = Color.White.copy(alpha = 0.5f), modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Diagnostics & Process Trace",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.6f)
+                    )
+                }
+
+                Icon(
+                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+
+            AnimatedVisibility(
+                visible = isExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column(modifier = Modifier.padding(top = 10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = "COPY",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = accentColor,
+                            modifier = Modifier
+                                .clickable {
+                                    val text = uiState.macroLogs.joinToString("\n") { "[${it.timestamp}] ${it.message}" }
+                                    clipboardManager.setText(AnnotatedString(text))
+                                    Toast.makeText(context, "Logs copied", Toast.LENGTH_SHORT).show()
+                                }
+                                .padding(4.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "CLEAR",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier
+                                .clickable { onClearLogs() }
+                                .padding(4.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF07090F),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 140.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(8.dp)
+                        ) {
+                            if (uiState.macroLogs.isEmpty()) {
+                                Text(
+                                    text = "Ready. No actions logged yet.",
+                                    fontSize = 9.sp,
+                                    color = Color.White.copy(alpha = 0.35f),
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    uiState.macroLogs.forEach { log ->
+                                        val color = when (log.level) {
+                                            LogLevel.SUCCESS -> Color(0xFF10B981)
+                                            LogLevel.EXEC -> Color(0xFFF59E0B)
+                                            LogLevel.PROCESS -> Color(0xFF38BDF8)
+                                            else -> Color.White.copy(alpha = 0.65f)
+                                        }
+                                        Text(
+                                            text = "[${log.timestamp}] ${log.message}",
+                                            fontSize = 9.sp,
+                                            color = color,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

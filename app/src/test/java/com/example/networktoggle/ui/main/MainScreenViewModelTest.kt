@@ -1,7 +1,12 @@
 package com.example.networktoggle.ui.main
 
+import com.example.networktoggle.macro.MacroActionType
+import com.example.networktoggle.macro.MacroExecutionState
+import com.example.networktoggle.macro.MacroStep
+import com.example.networktoggle.macro.RecordedMacro
 import com.example.networktoggle.network.NetworkMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MainScreenViewModelTest {
@@ -22,28 +27,60 @@ class MainScreenViewModelTest {
     }
 
     @Test
-    fun macroType_presets_are_configured() {
-        val presets = com.example.networktoggle.macro.MacroType.entries
-        assertEquals(3, presets.size)
-        assertEquals("Turbo 5G Ultra-Lock", com.example.networktoggle.macro.MacroType.TURBO_5G_LOCK.displayName)
-        assertEquals("Cell Tower Reseat", com.example.networktoggle.macro.MacroType.TOWER_REFRESH.displayName)
-        assertEquals("Battery Saver 4G Eco", com.example.networktoggle.macro.MacroType.BATTERY_ECO_4G.displayName)
+    fun macroActionType_entries_are_configured() {
+        val actions = MacroActionType.entries
+        assertTrue(actions.contains(MacroActionType.SET_5G))
+        assertTrue(actions.contains(MacroActionType.SET_4G))
+        assertTrue(actions.contains(MacroActionType.SET_AUTO))
+        assertTrue(actions.contains(MacroActionType.WAIT_DELAY))
+        assertTrue(actions.contains(MacroActionType.CYCLE_DATA))
+        assertTrue(actions.contains(MacroActionType.LAUNCH_RADIO_INFO))
+    }
+
+    @Test
+    fun recordedMacro_serialization_and_steps_work() {
+        val step1 = MacroStep(actionType = MacroActionType.SET_5G, label = "Switch to 5G NR")
+        val step2 = MacroStep(actionType = MacroActionType.WAIT_DELAY, label = "Wait 1s", delaySeconds = 1)
+        val step3 = MacroStep(actionType = MacroActionType.CYCLE_DATA, label = "Cycle Data")
+
+        val macro = RecordedMacro(
+            name = "Test 5G Optimizer",
+            steps = listOf(step1, step2, step3)
+        )
+
+        assertEquals("Test 5G Optimizer", macro.name)
+        assertEquals(3, macro.steps.size)
+        assertEquals(MacroActionType.SET_5G, macro.steps[0].actionType)
+        assertEquals(MacroActionType.WAIT_DELAY, macro.steps[1].actionType)
+        assertEquals(MacroActionType.CYCLE_DATA, macro.steps[2].actionType)
+
+        val serialized = macro.toSerialized()
+        val restored = RecordedMacro.fromSerialized(serialized)
+
+        org.junit.Assert.assertNotNull(restored)
+        assertEquals(macro.id, restored!!.id)
+        assertEquals(macro.name, restored.name)
+        assertEquals(3, restored.steps.size)
+        assertEquals(macro.steps[0].label, restored.steps[0].label)
     }
 
     @Test
     fun macroState_transitions_work() {
-        val idle = com.example.networktoggle.macro.MacroExecutionState.Idle
-        val running = com.example.networktoggle.macro.MacroExecutionState.Running(
-            com.example.networktoggle.macro.MacroType.TURBO_5G_LOCK,
-            "Scanning telephony processes...",
-            0.2f
+        val idle = MacroExecutionState.Idle
+        val running = MacroExecutionState.Running(
+            macroName = "My 5G Macro",
+            stepLabel = "Switch to 5G NR",
+            currentStepIndex = 1,
+            totalSteps = 2,
+            progress = 0.5f
         )
-        val completed = com.example.networktoggle.macro.MacroExecutionState.Completed(
-            com.example.networktoggle.macro.MacroType.TURBO_5G_LOCK,
-            true,
-            "5G Ultra-Lock active"
+        val completed = MacroExecutionState.Completed(
+            macroName = "My 5G Macro",
+            success = true,
+            summary = "Completed 2 steps"
         )
-        assertEquals(com.example.networktoggle.macro.MacroType.TURBO_5G_LOCK, running.type)
+        assertEquals("My 5G Macro", running.macroName)
+        assertEquals(1, running.currentStepIndex)
         assertEquals(true, completed.success)
     }
 }

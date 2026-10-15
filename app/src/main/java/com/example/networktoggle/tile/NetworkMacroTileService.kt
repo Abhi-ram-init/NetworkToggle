@@ -7,7 +7,6 @@ import android.service.quicksettings.TileService
 import android.widget.Toast
 import com.example.networktoggle.macro.MacroExecutionState
 import com.example.networktoggle.macro.MacroManager
-import com.example.networktoggle.macro.MacroType
 import com.example.networktoggle.network.NetworkModeManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,21 +34,31 @@ class NetworkMacroTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val tile = qsTile ?: return
+        val primaryMacro = macroManager.savedMacros.value.firstOrNull()
 
-        // Set tile to switching state
+        if (primaryMacro == null) {
+            Toast.makeText(
+                applicationContext,
+                "⏺ No macros recorded. Open Network Toggle and tap 'Record Macro' first.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        // Set tile to running state
         tile.state = Tile.STATE_UNAVAILABLE
-        tile.subtitle = "Reading & Executing…"
+        tile.subtitle = "Running '${primaryMacro.name}'…"
         tile.updateTile()
 
         serviceScope.launch {
-            val success = macroManager.executeMacro(MacroType.TURBO_5G_LOCK)
+            val success = macroManager.executeMacro(primaryMacro)
             refreshTile(isBusy = false, isCompleted = true)
 
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(
                     applicationContext,
-                    if (success) "⚡ 5G Macro: Process inspected & 5G Ultra-Lock applied!"
-                    else "5G Macro completed.",
+                    if (success) "✅ Macro '${primaryMacro.name}' completed!"
+                    else "Macro execution finished.",
                     Toast.LENGTH_SHORT
                 ).show()
             }
@@ -58,11 +67,13 @@ class NetworkMacroTileService : TileService() {
 
     private fun refreshTile(isBusy: Boolean, isCompleted: Boolean = false) {
         val tile = qsTile ?: return
-        tile.label = "5G Macro"
+        val primaryMacro = macroManager.savedMacros.value.firstOrNull()
+        tile.label = primaryMacro?.name ?: "Network Macro"
         tile.subtitle = when {
             isBusy -> "Running Macro…"
-            isCompleted -> "5G Locked"
-            else -> "Tap to Optimize"
+            isCompleted -> "Completed"
+            primaryMacro != null -> "Tap to Run"
+            else -> "Record in App"
         }
         tile.state = if (isBusy) Tile.STATE_UNAVAILABLE else Tile.STATE_ACTIVE
         tile.updateTile()
