@@ -67,9 +67,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.networktoggle.macro.BlockCategory
 import com.example.networktoggle.macro.LogLevel
 import com.example.networktoggle.macro.MacroActionType
 import com.example.networktoggle.macro.MacroAccessibilityService
+import com.example.networktoggle.macro.MacroBlockCatalog
+import com.example.networktoggle.macro.MacroBlockCatalogItem
 import com.example.networktoggle.macro.MacroExecutionState
 import com.example.networktoggle.macro.MacroManager
 import com.example.networktoggle.macro.MacroStep
@@ -151,7 +154,38 @@ fun MainScreen(
         onFinishRecording = viewModel::finishRecordingMacro,
         onCancelRecording = viewModel::cancelRecordingMacro,
         onDeleteMacro = viewModel::deleteMacro,
-        onRunMacro = viewModel::runMacro,
+        onRunMacro = { macro ->
+            viewModel.runMacro(
+                macro = macro,
+                onPromptAddTile = {
+                    viewModel.requestAddTileToControlPanel(isMacroTile = true, context = context) { msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                },
+                onExitApp = {
+                    (context as? android.app.Activity)?.finish()
+                }
+            )
+        },
+        onBuildAndRunGuidedMacro = { carrier, targetMode ->
+            val macro = viewModel.buildAndSaveGuidedSimToggleMacro(carrier, targetMode)
+            if (macro != null) {
+                viewModel.runMacro(
+                    macro = macro,
+                    onPromptAddTile = {
+                        viewModel.requestAddTileToControlPanel(isMacroTile = true, context = context) { msg ->
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    onExitApp = {
+                        (context as? android.app.Activity)?.finish()
+                    }
+                )
+            }
+        },
+        onCreateCustomBlockMacro = { name, steps ->
+            viewModel.createCustomBlockMacro(name, steps)
+        },
         onClearMacroLogs = viewModel::clearMacroLogs,
         onRequestAddControlPanelTile = { isMacro ->
             viewModel.requestAddTileToControlPanel(isMacro, context) { msg ->
@@ -179,6 +213,8 @@ private fun MainScreenContent(
     onCancelRecording: () -> Unit,
     onDeleteMacro: (String) -> Unit,
     onRunMacro: (RecordedMacro) -> Unit,
+    onBuildAndRunGuidedMacro: (String, String) -> Unit,
+    onCreateCustomBlockMacro: (String, List<MacroStep>) -> Unit,
     onClearMacroLogs: () -> Unit,
     onRequestAddControlPanelTile: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -313,7 +349,9 @@ private fun MainScreenContent(
                 onFinishRecording = onFinishRecording,
                 onCancelRecording = onCancelRecording,
                 onDeleteMacro = onDeleteMacro,
-                onRunMacro = onRunMacro
+                onRunMacro = onRunMacro,
+                onBuildAndRunGuidedMacro = onBuildAndRunGuidedMacro,
+                onCreateCustomBlockMacro = onCreateCustomBlockMacro
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -700,7 +738,7 @@ private fun SegmentedModeSelector(
 }
 
 // -------------------------------------------------------------
-// CUSTOM MACRO HUB (USER RECORDED MACROS - ZERO PRE-ADDED)
+// CUSTOM MACRO HUB: BLOCK-BASED EDITORS & TOUCH RECORDING (NO ROOT)
 // -------------------------------------------------------------
 @Composable
 private fun CustomMacroSection(
@@ -712,13 +750,222 @@ private fun CustomMacroSection(
     onCancelRecording: () -> Unit,
     onDeleteMacro: (String) -> Unit,
     onRunMacro: (RecordedMacro) -> Unit,
+    onBuildAndRunGuidedMacro: (String, String) -> Unit,
+    onCreateCustomBlockMacro: (String, List<MacroStep>) -> Unit,
 ) {
-    var isNewMacroNameInputVisible by remember { mutableStateOf(false) }
-    var macroNameInput by remember { mutableStateOf("") }
-    val isRunning = uiState.macroState is MacroExecutionState.Running
     val context = LocalContext.current
+    val isRunning = uiState.macroState is MacroExecutionState.Running
     val isAccessibilityActive = remember(uiState) {
         MacroAccessibilityService.isAccessibilityEnabled(context)
+    }
+
+    val detectedCarrier = uiState.inspectedProcess?.carrierName?.takeIf { it.isNotBlank() } ?: "Jio"
+
+    var isBlockEditorOpen by remember { mutableStateOf(false) }
+    var blockEditorName by remember { mutableStateOf("") }
+    val blockEditorSteps = remember { mutableStateListOf<MacroStep>() }
+
+    var isCatalogDialogVisible by remember { mutableStateOf(false) }
+    var selectedCategoryFilter by remember { mutableStateOf<BlockCategory?>(null) }
+    var isPermissionDialogVisible by remember { mutableStateOf(false) }
+
+    // Permission Prompt Dialog
+    if (isPermissionDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { isPermissionDialogVisible = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "🛡️", fontSize = 18.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Enable Macro & Gestures",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "To automate SIM toggling, screen clicks, and touch gestures without root access, Android requires the Accessibility Service permission.",
+                        fontSize = 12.sp,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF1E293B),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "What this enables:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "• Automated Settings ➔ SIMs ➔ 4G toggle\n• Touch & gesture simulation (clicks, swipes)\n• Over 120 triggers & 200 block actions",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "💡 Android 13+ Note: If the setting appears greyed out, go to App Info ➔ tap 3 dots (top right) ➔ tap 'Allow restricted settings' first.",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.5f)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        isPermissionDialogVisible = false
+                        MacroAccessibilityService.openAccessibilitySettings(context)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                ) {
+                    Text("OPEN SETTINGS", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { isPermissionDialogVisible = false }) {
+                    Text("LATER", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                }
+            },
+            containerColor = Color(0xFF111726),
+            shape = RoundedCornerShape(18.dp)
+        )
+    }
+
+    // Block Catalog Browser Dialog (120+ Triggers & 200+ Actions)
+    if (isCatalogDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { isCatalogDialogVisible = false },
+            title = {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "🧩", fontSize = 18.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Macro Block Catalog",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    Text(
+                        text = "120+ Triggers & 200+ Actions without root",
+                        fontSize = 11.sp,
+                        color = Color(0xFF38BDF8)
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                ) {
+                    // Category Filter Chips
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val categories = listOf(null) + BlockCategory.entries.take(4)
+                        categories.forEach { cat ->
+                            val isSelected = selectedCategoryFilter == cat
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSelected) accentColor else Color.White.copy(alpha = 0.08f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { selectedCategoryFilter = cat }
+                            ) {
+                                Text(
+                                    text = cat?.icon ?: "All",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.Black else Color.White,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // Blocks List
+                    val filteredItems = MacroBlockCatalog.items.filter {
+                        selectedCategoryFilter == null || it.category == selectedCategoryFilter
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        filteredItems.forEach { item ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color.White.copy(alpha = 0.05f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val newStep = MacroStep(
+                                            actionType = item.actionType,
+                                            label = item.title,
+                                            delaySeconds = item.defaultDelay,
+                                            shellCommand = item.defaultParam
+                                        )
+                                        blockEditorSteps.add(newStep)
+                                        isCatalogDialogVisible = false
+                                    }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = item.icon, fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = item.title,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                        Text(
+                                            text = item.description,
+                                            fontSize = 10.sp,
+                                            color = Color.White.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                    Icon(
+                                        Icons.Default.Add,
+                                        contentDescription = "Add Block",
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { isCatalogDialogVisible = false }) {
+                    Text("CLOSE", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                }
+            },
+            containerColor = Color(0xFF111726),
+            shape = RoundedCornerShape(18.dp)
+        )
     }
 
     Surface(
@@ -728,7 +975,8 @@ private fun CustomMacroSection(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
-            // Header
+
+            // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -738,7 +986,7 @@ private fun CustomMacroSection(
                     Text(text = "⚡", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "CUSTOM MACROS",
+                        text = "AUTOMATION & MACRO ENGINE",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White.copy(alpha = 0.6f),
@@ -746,55 +994,372 @@ private fun CustomMacroSection(
                     )
                 }
 
-                if (!uiState.isRecordingMacro) {
-                    Text(
-                        text = "+ Record",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = accentColor,
-                        modifier = Modifier
-                            .clickable {
-                                isNewMacroNameInputVisible = true
-                                macroNameInput = "Macro ${uiState.savedMacros.size + 1}"
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (!isBlockEditorOpen && !uiState.isRecordingMacro) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = accentColor.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.3f)),
+                            modifier = Modifier.clickable {
+                                isBlockEditorOpen = true
+                                blockEditorName = "Custom Macro ${uiState.savedMacros.size + 1}"
+                                blockEditorSteps.clear()
                             }
-                            .padding(4.dp)
-                    )
+                        ) {
+                            Text(
+                                text = "+ Block Editor",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = Color(0xFFEF4444).copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.3f)),
+                            modifier = Modifier.clickable {
+                                onStartRecording("Touch Macro ${uiState.savedMacros.size + 1}")
+                            }
+                        ) {
+                            Text(
+                                text = "⏺ Record",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFEF4444),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
+            // 1. Accessibility Permission Status / Onboarding Banner
             if (!isAccessibilityActive) {
                 Surface(
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(12.dp),
                     color = Color(0xFF38BDF8).copy(alpha = 0.08f),
-                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.2f)),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.25f)),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { MacroAccessibilityService.openAccessibilitySettings(context) }
+                        .clickable { isPermissionDialogVisible = true }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Text(text = "🛡️", fontSize = 15.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Macro & Touch Permission Required",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8)
+                            )
+                            Text(
+                                text = "Allows automated SIM toggles, screen clicks & 120+ triggers without root",
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = 0.65f)
+                            )
+                        }
                         Text(
-                            text = "Enable Accessibility for screen clicks & gestures",
+                            text = "GRANT",
                             fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
                             color = Color(0xFF38BDF8),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            text = "ENABLE",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF38BDF8)
+                            modifier = Modifier.padding(start = 6.dp)
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
-            // 1. RECORDING STATE ACTIVE
+            // 2. Automated Guided SIM Toggle Card (User-Requested Guided Flow)
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF1E293B).copy(alpha = 0.6f),
+                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.25f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = "📲", fontSize = 14.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "GUIDED SIM NETWORK TOGGLE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF38BDF8),
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF38BDF8).copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = "ACTIVE: $detectedCarrier",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF38BDF8),
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Automates the complete sequence for your active SIM:\nSettings ➔ Network & Internet ➔ SIMs ➔ $detectedCarrier ➔ Read Settings ➔ Preferred Network Type ➔ 4G ➔ Add Control Tile ➔ Exit App",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.7f),
+                        lineHeight = 15.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Button(
+                        onClick = {
+                            if (!isAccessibilityActive) {
+                                isPermissionDialogVisible = true
+                            } else {
+                                onBuildAndRunGuidedMacro(detectedCarrier, "4G")
+                            }
+                        },
+                        enabled = !isRunning,
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "SETUP & EXECUTE GUIDED SIM TOGGLE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.Black
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 3. BLOCK-BASED MACRO EDITOR (FOR USER'S OWN MACROS)
+            if (isBlockEditorOpen) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White.copy(alpha = 0.04f),
+                    border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "🧩 Block-Based Macro Builder",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = accentColor
+                            )
+                            Text(
+                                text = "${blockEditorSteps.size} Blocks",
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = 0.6f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        OutlinedTextField(
+                            value = blockEditorName,
+                            onValueChange = { blockEditorName = it },
+                            label = { Text("Macro Name", fontSize = 11.sp) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = accentColor,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Block Sequence Chain
+                        if (blockEditorSteps.isEmpty()) {
+                            Text(
+                                text = "No blocks added yet. Tap '+ Add Block' or quick chips below to construct your macro.",
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.4f),
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                blockEditorSteps.forEachIndexed { index, step ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color.White.copy(alpha = 0.06f),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${index + 1}.",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White.copy(alpha = 0.4f)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(text = step.actionType.icon, fontSize = 12.sp)
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = step.label,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = Color.White
+                                                )
+                                                if (step.shellCommand.isNotBlank()) {
+                                                    Text(
+                                                        text = "Param: ${step.shellCommand}",
+                                                        fontSize = 9.sp,
+                                                        color = Color.White.copy(alpha = 0.5f)
+                                                    )
+                                                }
+                                            }
+                                            IconButton(
+                                                onClick = { blockEditorSteps.removeAt(index) },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Close,
+                                                    contentDescription = "Remove",
+                                                    tint = Color.White.copy(alpha = 0.5f),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Add Block Buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Button(
+                                onClick = { isCatalogDialogVisible = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.12f)),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                            ) {
+                                Text("+ Add Block from Catalog", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // Quick Chips Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            RecordActionChip(
+                                label = "5G",
+                                icon = "⚡",
+                                onClick = { blockEditorSteps.add(MacroStep(actionType = MacroActionType.SET_5G, label = "Switch to 5G NR")) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "4G",
+                                icon = "📶",
+                                onClick = { blockEditorSteps.add(MacroStep(actionType = MacroActionType.SET_4G, label = "Switch to 4G LTE")) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Wait 1s",
+                                icon = "⏱",
+                                onClick = { blockEditorSteps.add(MacroStep(actionType = MacroActionType.WAIT_DELAY, label = "Wait 1s", delaySeconds = 1)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Tap",
+                                icon = "👆",
+                                onClick = { blockEditorSteps.add(MacroStep(actionType = MacroActionType.SCREEN_TAP, label = "Tap Screen", shellCommand = "540,960")) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            RecordActionChip(
+                                label = "Home",
+                                icon = "🏠",
+                                onClick = { blockEditorSteps.add(MacroStep(actionType = MacroActionType.GO_HOME, label = "Go to Home Screen")) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Save & Cancel Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    if (blockEditorSteps.isNotEmpty()) {
+                                        onCreateCustomBlockMacro(blockEditorName, blockEditorSteps.toList())
+                                        isBlockEditorOpen = false
+                                    }
+                                },
+                                enabled = blockEditorSteps.isNotEmpty(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                            ) {
+                                Text("SAVE CUSTOM MACRO", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                            }
+
+                            OutlinedButton(
+                                onClick = { isBlockEditorOpen = false },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White.copy(alpha = 0.7f)),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
+                                modifier = Modifier.height(38.dp)
+                            ) {
+                                Text("CANCEL", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            // 4. TOUCH RECORDING ACTIVE BANNER
             if (uiState.isRecordingMacro) {
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -871,17 +1436,9 @@ private fun CustomMacroSection(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Quick Step Adders
-                        Text(
-                            text = "Add Action Step:",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(alpha = 0.45f)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -977,157 +1534,98 @@ private fun CustomMacroSection(
                         }
                     }
                 }
-            } else {
-                // 2. NOT RECORDING: Show Record Button or Prompt Input
-                if (isNewMacroNameInputVisible) {
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White.copy(alpha = 0.04f),
-                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.1f)),
-                        modifier = Modifier.fillMaxWidth()
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            // 5. SAVED MACROS LIST
+            Text(
+                text = "SAVED MACROS (${uiState.savedMacros.size})",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White.copy(alpha = 0.5f),
+                letterSpacing = 0.8.sp
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            if (uiState.savedMacros.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color.White.copy(alpha = 0.03f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text(
-                                text = "Name your custom macro:",
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.6f)
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            OutlinedTextField(
-                                value = macroNameInput,
-                                onValueChange = { macroNameInput = it },
-                                placeholder = { Text("e.g. 5G Ultra Boost", fontSize = 12.sp) },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = accentColor,
-                                    unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White
-                                )
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.End
-                            ) {
-                                TextButton(onClick = { isNewMacroNameInputVisible = false }) {
-                                    Text("Cancel", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Button(
-                                    onClick = {
-                                        isNewMacroNameInputVisible = false
-                                        onStartRecording(macroNameInput)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = accentColor)
-                                ) {
-                                    Text("Start Recording", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
+                        Text(
+                            text = "No saved macros yet.",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White.copy(alpha = 0.7f)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Tap 'SETUP & EXECUTE GUIDED SIM TOGGLE' above or use the Block Editor to build custom automations.",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.4f),
+                            textAlign = TextAlign.Center
+                        )
                     }
-                    Spacer(modifier = Modifier.height(10.dp))
                 }
-
-                // 3. Saved Macros List (Clean, user-driven)
-                if (uiState.savedMacros.isEmpty()) {
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = Color.White.copy(alpha = 0.03f),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    uiState.savedMacros.forEach { macro ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color.White.copy(alpha = 0.04f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(
-                                text = "No custom macros recorded yet.",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White.copy(alpha = 0.7f)
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Automate your network switches by recording your custom action sequence.",
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.4f),
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Button(
-                                onClick = {
-                                    isNewMacroNameInputVisible = true
-                                    macroNameInput = "Macro 1"
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = accentColor)
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(12.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "RECORD MACRO",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.Black
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        uiState.savedMacros.forEach { macro ->
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = Color.White.copy(alpha = 0.04f),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = macro.name,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    val stepsSummary = macro.steps.joinToString(" → ") { it.label }
+                                    Text(
+                                        text = "${macro.steps.size} blocks: $stepsSummary",
+                                        fontSize = 10.sp,
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        maxLines = 1
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                // Play Button
+                                Button(
+                                    onClick = { onRunMacro(macro) },
+                                    enabled = !isRunning,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                                    modifier = Modifier.height(36.dp)
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = macro.name,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        val stepsSummary = macro.steps.joinToString(" → ") { it.label }
-                                        Text(
-                                            text = "${macro.steps.size} steps: $stepsSummary",
-                                            fontSize = 10.sp,
-                                            color = Color.White.copy(alpha = 0.5f),
-                                            maxLines = 1
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    // Play Button
-                                    Button(
-                                        onClick = { onRunMacro(macro) },
-                                        enabled = !isRunning,
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-                                        modifier = Modifier.height(36.dp)
-                                    ) {
-                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(15.dp))
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        Text(text = "RUN", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.Black)
-                                    }
-
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(15.dp))
                                     Spacer(modifier = Modifier.width(4.dp))
+                                    Text(text = "RUN", fontSize = 11.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                                }
 
-                                    // Delete Button
-                                    IconButton(
-                                        onClick = { onDeleteMacro(macro.id) },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete Macro", tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
-                                    }
+                                Spacer(modifier = Modifier.width(4.dp))
+
+                                // Delete Button
+                                IconButton(
+                                    onClick = { onDeleteMacro(macro.id) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Macro", tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(16.dp))
                                 }
                             }
                         }

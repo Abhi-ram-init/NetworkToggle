@@ -38,6 +38,24 @@ class MainScreenViewModelTest {
         assertTrue(actions.contains(MacroActionType.GO_HOME))
         assertTrue(actions.contains(MacroActionType.SCREEN_TAP))
         assertTrue(actions.contains(MacroActionType.SCREEN_SWIPE))
+        assertTrue(actions.contains(MacroActionType.CLICK_TEXT))
+        assertTrue(actions.contains(MacroActionType.SCROLL_DOWN))
+        assertTrue(actions.contains(MacroActionType.OPEN_NETWORK_SETTINGS))
+        assertTrue(actions.contains(MacroActionType.READ_SIM_SETTINGS))
+        assertTrue(actions.contains(MacroActionType.PROMPT_ADD_TILE))
+        assertTrue(actions.contains(MacroActionType.EXIT_APP))
+    }
+
+    @Test
+    fun blockCatalog_contains_items_across_categories() {
+        val items = com.example.networktoggle.macro.MacroBlockCatalog.items
+        assertTrue(items.isNotEmpty())
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.TRIGGERS })
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.CONNECTIVITY })
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.GESTURES })
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.NAVIGATION })
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.FLOW })
+        assertTrue(items.any { it.category == com.example.networktoggle.macro.BlockCategory.SYSTEM })
     }
 
     @Test

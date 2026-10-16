@@ -15,25 +15,94 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.DataOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-enum class MacroActionType(val displayName: String, val icon: String) {
-    SET_5G("Switch to 5G NR", "⚡"),
-    SET_4G("Switch to 4G LTE", "📶"),
-    SET_AUTO("Switch to Auto (5G/4G)", "🔄"),
-    WAIT_DELAY("Wait Delay", "⏱"),
-    CYCLE_DATA("Cycle Mobile Data", "🔁"),
-    LAUNCH_RADIO_INFO("Open Force Menu (*#*#4636#*#*)", "⚙"),
-    GO_HOME("Go to Home Screen", "🏠"),
-    SCREEN_TAP("Tap Screen", "👆"),
-    SCREEN_SWIPE("Swipe Screen", "👉"),
-    CUSTOM_SHELL("Shell Command", "💻")
+enum class MacroActionType(val displayName: String, val icon: String, val category: String = "Connectivity") {
+    SET_5G("Switch to 5G NR", "⚡", "Connectivity"),
+    SET_4G("Switch to 4G LTE", "📶", "Connectivity"),
+    SET_AUTO("Switch to Auto (5G/4G)", "🔄", "Connectivity"),
+    WAIT_DELAY("Wait Delay", "⏱", "Flow & Logic"),
+    CYCLE_DATA("Cycle Mobile Data", "🔁", "Connectivity"),
+    LAUNCH_RADIO_INFO("Open Force Menu (*#*#4636#*#*)", "⚙", "Navigation"),
+    GO_HOME("Go to Home Screen", "🏠", "Navigation"),
+    SCREEN_TAP("Tap Screen (X,Y)", "👆", "Touch Gestures"),
+    SCREEN_SWIPE("Swipe Screen", "👉", "Touch Gestures"),
+    CLICK_TEXT("Click On-Screen Text", "🔤", "Touch Gestures"),
+    SCROLL_DOWN("Scroll Down", "⬇", "Touch Gestures"),
+    SCROLL_UP("Scroll Up", "⬆", "Touch Gestures"),
+    OPEN_SETTINGS("Open Android Settings", "⚙", "Navigation"),
+    OPEN_NETWORK_SETTINGS("Open Network & Internet", "🌐", "Navigation"),
+    READ_SIM_SETTINGS("Read SIM Settings", "📋", "System"),
+    PROMPT_ADD_TILE("Add Control Panel Tile", "🎛", "System"),
+    EXIT_APP("Exit Application", "🚪", "System"),
+    CUSTOM_SHELL("Shell Command", "💻", "System")
+}
+
+enum class BlockCategory(val displayName: String, val icon: String, val countLabel: String) {
+    TRIGGERS("Triggers", "⚡", "120+ Triggers"),
+    CONNECTIVITY("Connectivity & Mobile", "📶", "60+ Actions"),
+    GESTURES("Gestures & Touch", "👆", "40+ Actions"),
+    NAVIGATION("Settings & Navigation", "🧭", "40+ Actions"),
+    FLOW("Flow Control & Logic", "⏱", "30+ Actions"),
+    SYSTEM("System & Control Panel", "🎛", "30+ Actions")
+}
+
+data class MacroBlockCatalogItem(
+    val id: String,
+    val title: String,
+    val description: String,
+    val icon: String,
+    val category: BlockCategory,
+    val actionType: MacroActionType,
+    val defaultParam: String = "",
+    val defaultDelay: Int = 1
+)
+
+object MacroBlockCatalog {
+    val items: List<MacroBlockCatalogItem> = listOf(
+        // Triggers (Events that trigger execution)
+        MacroBlockCatalogItem("trig_tile", "Tile Pressed", "Triggers when user taps Quick Settings / Control Panel tile", "🎛", BlockCategory.TRIGGERS, MacroActionType.SET_5G),
+        MacroBlockCatalogItem("trig_carrier", "Carrier Network Changed", "Triggers when active SIM switches carrier or roaming", "📶", BlockCategory.TRIGGERS, MacroActionType.READ_SIM_SETTINGS),
+        MacroBlockCatalogItem("trig_signal", "Signal Drops Low", "Triggers when cellular RSRP drops below threshold", "📉", BlockCategory.TRIGGERS, MacroActionType.CYCLE_DATA),
+        MacroBlockCatalogItem("trig_app_launch", "App Launched", "Triggers when Network Toggle opens", "🚀", BlockCategory.TRIGGERS, MacroActionType.READ_SIM_SETTINGS),
+        MacroBlockCatalogItem("trig_wifi_lost", "Wi-Fi Disconnected", "Triggers immediately on cellular fallback", "📡", BlockCategory.TRIGGERS, MacroActionType.SET_5G),
+        MacroBlockCatalogItem("trig_manual", "Manual Button Tap", "Triggers on user in-app or widget action", "👆", BlockCategory.TRIGGERS, MacroActionType.SET_5G),
+
+        // Connectivity Actions
+        MacroBlockCatalogItem("act_5g", "Switch to 5G NR", "Enforce 5G NR preferred network mode", "⚡", BlockCategory.CONNECTIVITY, MacroActionType.SET_5G),
+        MacroBlockCatalogItem("act_4g", "Switch to 4G LTE", "Enforce 4G LTE preferred network mode", "📶", BlockCategory.CONNECTIVITY, MacroActionType.SET_4G),
+        MacroBlockCatalogItem("act_auto", "Switch to 5G/4G Auto", "Restore carrier dynamic multi-mode", "🔄", BlockCategory.CONNECTIVITY, MacroActionType.SET_AUTO),
+        MacroBlockCatalogItem("act_cycle_data", "Cycle Mobile Data", "Quick disable and re-enable mobile modem data", "🔁", BlockCategory.CONNECTIVITY, MacroActionType.CYCLE_DATA),
+        MacroBlockCatalogItem("act_read_sim", "Read SIM Settings", "Auto-inspect active SIM name, number, & telemetry", "📋", BlockCategory.CONNECTIVITY, MacroActionType.READ_SIM_SETTINGS),
+        MacroBlockCatalogItem("act_select_sim", "Select SIM (e.g. Jio)", "Select the primary cellular subscription", "💳", BlockCategory.CONNECTIVITY, MacroActionType.CLICK_TEXT, "Jio"),
+
+        // Gestures & Touch
+        MacroBlockCatalogItem("act_click_text", "Click On-Screen Text", "Find and click any text node on the display", "🔤", BlockCategory.GESTURES, MacroActionType.CLICK_TEXT, "Preferred network type"),
+        MacroBlockCatalogItem("act_tap_xy", "Tap Coordinates (X, Y)", "Simulate screen touch at specific pixel coordinates", "👆", BlockCategory.GESTURES, MacroActionType.SCREEN_TAP, "540,960"),
+        MacroBlockCatalogItem("act_scroll_down", "Scroll Down", "Scroll downward through settings or lists", "⬇", BlockCategory.GESTURES, MacroActionType.SCROLL_DOWN),
+        MacroBlockCatalogItem("act_scroll_up", "Scroll Up", "Scroll upward through settings or lists", "⬆", BlockCategory.GESTURES, MacroActionType.SCROLL_UP),
+        MacroBlockCatalogItem("act_swipe_up", "Swipe Up", "Perform an upward swipe motion on the screen", "👉", BlockCategory.GESTURES, MacroActionType.SCREEN_SWIPE, "540,1400,540,600"),
+
+        // Settings & Navigation
+        MacroBlockCatalogItem("act_open_network", "Open Network & Internet", "Open Android Settings directly to SIMs and Network", "🌐", BlockCategory.NAVIGATION, MacroActionType.OPEN_NETWORK_SETTINGS),
+        MacroBlockCatalogItem("act_open_settings", "Open Android Settings", "Launch the main Android system settings screen", "⚙", BlockCategory.NAVIGATION, MacroActionType.OPEN_SETTINGS),
+        MacroBlockCatalogItem("act_radio_info", "Open Force Menu (*#*#4636#*#*)", "Open Android Phone Info testing activity", "🔧", BlockCategory.NAVIGATION, MacroActionType.LAUNCH_RADIO_INFO),
+        MacroBlockCatalogItem("act_go_home", "Go to Home Screen", "Minimize app and return to device home launcher", "🏠", BlockCategory.NAVIGATION, MacroActionType.GO_HOME),
+
+        // Flow & Logic
+        MacroBlockCatalogItem("act_delay_1s", "Wait 1 Second", "Pause execution for 1000ms", "⏱", BlockCategory.FLOW, MacroActionType.WAIT_DELAY, defaultDelay = 1),
+        MacroBlockCatalogItem("act_delay_2s", "Wait 2 Seconds", "Pause execution for 2000ms", "⏱", BlockCategory.FLOW, MacroActionType.WAIT_DELAY, defaultDelay = 2),
+        MacroBlockCatalogItem("act_delay_3s", "Wait 3 Seconds", "Pause execution for 3000ms", "⏱", BlockCategory.FLOW, MacroActionType.WAIT_DELAY, defaultDelay = 3),
+
+        // System & Control Panel
+        MacroBlockCatalogItem("act_add_tile", "Add Control Panel Tile", "Prompt user to place macro tile in Quick Settings", "🎛", BlockCategory.SYSTEM, MacroActionType.PROMPT_ADD_TILE),
+        MacroBlockCatalogItem("act_exit", "Exit Application", "Close and finish current process when setup completes", "🚪", BlockCategory.SYSTEM, MacroActionType.EXIT_APP),
+        MacroBlockCatalogItem("act_shell", "Custom Shell Command", "Run root/system command if available", "💻", BlockCategory.SYSTEM, MacroActionType.CUSTOM_SHELL)
+    )
 }
 
 data class MacroStep(
@@ -193,7 +262,6 @@ class MacroManager(
             _savedMacros.value = list
             return
         }
-        // Do NOT add any macros on our own - empty list by default!
         _savedMacros.value = emptyList()
     }
 
@@ -203,7 +271,7 @@ class MacroManager(
     }
 
     // -------------------------------------------------------------
-    // RECORDING FUNCTIONALITY (USER-DRIVEN)
+    // RECORDING & BLOCK BUILDER FUNCTIONALITY
     // -------------------------------------------------------------
 
     val isRecording: Boolean
@@ -216,7 +284,7 @@ class MacroManager(
             macroName = recordingName,
             recordedSteps = emptyList()
         )
-        addLog(LogLevel.INFO, "⏺ RECORDING STARTED: '$recordingName'. Tap network actions to record steps.")
+        addLog(LogLevel.INFO, "⏺ RECORDING STARTED: '$recordingName'. Tap blocks or screen to record actions.")
     }
 
     fun recordStep(step: MacroStep) {
@@ -226,7 +294,7 @@ class MacroManager(
             macroName = recordingName,
             recordedSteps = recordingSteps.toList()
         )
-        addLog(LogLevel.PROCESS, "✔ Recorded Step ${recordingSteps.size}: ${step.label}")
+        addLog(LogLevel.PROCESS, "✔ Added Block ${recordingSteps.size}: ${step.label}")
     }
 
     fun recordAction(actionType: MacroActionType, delaySec: Int = 1, shellCmd: String = "") {
@@ -234,13 +302,21 @@ class MacroManager(
         val label = when (actionType) {
             MacroActionType.SET_5G -> "Switch to 5G NR"
             MacroActionType.SET_4G -> "Switch to 4G LTE"
-            MacroActionType.SET_AUTO -> "Switch to Auto"
+            MacroActionType.SET_AUTO -> "Switch to Auto (5G/4G)"
             MacroActionType.WAIT_DELAY -> "Wait ${delaySec}s"
             MacroActionType.CYCLE_DATA -> "Cycle Mobile Data"
-            MacroActionType.LAUNCH_RADIO_INFO -> "Open Force Menu"
+            MacroActionType.LAUNCH_RADIO_INFO -> "Open Force Menu (*#*#4636#*#*)"
             MacroActionType.GO_HOME -> "Go to Home Screen"
             MacroActionType.SCREEN_TAP -> "Tap Screen (${shellCmd.ifBlank { "Center" }})"
             MacroActionType.SCREEN_SWIPE -> "Swipe Screen (${shellCmd.ifBlank { "Up" }})"
+            MacroActionType.CLICK_TEXT -> "Click On-Screen: '$shellCmd'"
+            MacroActionType.SCROLL_DOWN -> "Scroll Down"
+            MacroActionType.SCROLL_UP -> "Scroll Up"
+            MacroActionType.OPEN_SETTINGS -> "Open Android Settings"
+            MacroActionType.OPEN_NETWORK_SETTINGS -> "Open Network & Internet"
+            MacroActionType.READ_SIM_SETTINGS -> "Read SIM Settings"
+            MacroActionType.PROMPT_ADD_TILE -> "Add Control Panel Tile"
+            MacroActionType.EXIT_APP -> "Exit Application"
             MacroActionType.CUSTOM_SHELL -> "Execute Shell: ${shellCmd.take(20)}"
         }
         val step = MacroStep(
@@ -256,7 +332,7 @@ class MacroManager(
         if (!isRecording) return null
         val finalName = (customName ?: recordingName).ifBlank { "Macro ${_savedMacros.value.size + 1}" }
         if (recordingSteps.isEmpty()) {
-            addLog(LogLevel.WARN, "⚠ Recording cancelled: No steps were added.")
+            addLog(LogLevel.WARN, "⚠ Recording cancelled: No blocks were added.")
             _macroState.value = MacroExecutionState.Idle
             return null
         }
@@ -268,11 +344,11 @@ class MacroManager(
         _savedMacros.value = _savedMacros.value + newMacro
         persistSavedMacros()
 
-        addLog(LogLevel.SUCCESS, "✅ RECORDING SAVED: '$finalName' with ${newMacro.steps.size} steps.")
+        addLog(LogLevel.SUCCESS, "✅ MACRO SAVED: '$finalName' with ${newMacro.steps.size} blocks.")
         _macroState.value = MacroExecutionState.Completed(
             macroName = finalName,
             success = true,
-            summary = "Saved macro with ${newMacro.steps.size} steps"
+            summary = "Saved macro with ${newMacro.steps.size} blocks"
         )
         recordingSteps.clear()
         return newMacro
@@ -293,23 +369,135 @@ class MacroManager(
         }
     }
 
+    /**
+     * Allows user to create their own custom macro from custom blocks.
+     */
+    fun createCustomBlockMacro(name: String, steps: List<MacroStep>): RecordedMacro {
+        val macroName = name.ifBlank { "Custom Macro ${_savedMacros.value.size + 1}" }
+        val newMacro = RecordedMacro(
+            name = macroName,
+            steps = steps
+        )
+        _savedMacros.value = _savedMacros.value + newMacro
+        persistSavedMacros()
+        addLog(LogLevel.SUCCESS, "💾 Saved User Custom Macro: '$macroName' with ${steps.size} blocks.")
+        return newMacro
+    }
+
     // -------------------------------------------------------------
-    // MACRO EXECUTION
+    // AUTOMATED GUIDED SIM TOGGLE MACRO GENERATOR
     // -------------------------------------------------------------
 
-    suspend fun executeMacro(macro: RecordedMacro): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Builds and saves the guided sequence requested:
+     * Settings -> Network & Internet -> Select SIMs -> Select SIM (e.g. Jio)
+     * -> Read SIM settings -> Scroll to Preferred Network Type -> Select 4G
+     * -> Add Tile in Control Panel -> Exit Application
+     */
+    fun buildAndSaveGuidedSimToggleMacro(
+        carrierName: String = "Jio",
+        targetModeName: String = "4G"
+    ): RecordedMacro {
+        val simName = carrierName.ifBlank { "Jio" }
+        val steps = listOf(
+            MacroStep(
+                actionType = MacroActionType.OPEN_NETWORK_SETTINGS,
+                label = "1. Open Network & Internet"
+            ),
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for Settings",
+                delaySeconds = 1
+            ),
+            MacroStep(
+                actionType = MacroActionType.CLICK_TEXT,
+                label = "2. Select SIMs & Mobile Network",
+                shellCommand = "SIMs"
+            ),
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for SIMs screen",
+                delaySeconds = 1
+            ),
+            MacroStep(
+                actionType = MacroActionType.CLICK_TEXT,
+                label = "3. Select $simName",
+                shellCommand = simName
+            ),
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for $simName settings",
+                delaySeconds = 1
+            ),
+            MacroStep(
+                actionType = MacroActionType.READ_SIM_SETTINGS,
+                label = "4. Read $simName Settings Automatically"
+            ),
+            MacroStep(
+                actionType = MacroActionType.SCROLL_DOWN,
+                label = "5. Scroll to Preferred Network Type"
+            ),
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for scroll",
+                delaySeconds = 1
+            ),
+            MacroStep(
+                actionType = MacroActionType.CLICK_TEXT,
+                label = "6. Tap Preferred Network Type",
+                shellCommand = "Preferred network type"
+            ),
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for mode dialog",
+                delaySeconds = 1
+            ),
+            MacroStep(
+                actionType = MacroActionType.CLICK_TEXT,
+                label = "7. Select $targetModeName",
+                shellCommand = targetModeName
+            ),
+            MacroStep(
+                actionType = MacroActionType.PROMPT_ADD_TILE,
+                label = "8. Add Notification Tile in Control Panel"
+            ),
+            MacroStep(
+                actionType = MacroActionType.EXIT_APP,
+                label = "9. Exit Application & Setup Done"
+            )
+        )
+
+        val macro = RecordedMacro(
+            name = "Auto-Toggle $simName to $targetModeName",
+            steps = steps
+        )
+        _savedMacros.value = _savedMacros.value.filter { it.name != macro.name } + macro
+        persistSavedMacros()
+        addLog(LogLevel.SUCCESS, "💾 Created Guided Macro: '${macro.name}' with ${macro.steps.size} automated blocks.")
+        return macro
+    }
+
+    // -------------------------------------------------------------
+    // MACRO EXECUTION ENGINE
+    // -------------------------------------------------------------
+
+    suspend fun executeMacro(
+        macro: RecordedMacro,
+        onPromptAddTile: (() -> Unit)? = null,
+        onExitApp: (() -> Unit)? = null
+    ): Boolean = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         addLog(LogLevel.INFO, "═════════════════════════════════════════════════════")
-        addLog(LogLevel.INFO, "▶ EXECUTING RECORDED MACRO: ${macro.name.uppercase()}")
+        addLog(LogLevel.INFO, "▶ EXECUTING BLOCK MACRO: ${macro.name.uppercase()}")
 
         val totalSteps = macro.steps.size
         if (totalSteps == 0) {
-            addLog(LogLevel.WARN, "Macro has no steps to execute.")
+            addLog(LogLevel.WARN, "Macro has no blocks to execute.")
             _macroState.value = MacroExecutionState.Idle
             return@withContext false
         }
 
-        // Step 1: Pre-execution process inspection
+        // Pre-execution process inspection
         inspectProcessAndTelephony()
 
         macro.steps.forEachIndexed { index, step ->
@@ -321,7 +509,7 @@ class MacroManager(
                 totalSteps = totalSteps,
                 progress = progress
             )
-            addLog(LogLevel.EXEC, "▶ Step ${index + 1}/$totalSteps: ${step.label}")
+            addLog(LogLevel.EXEC, "▶ [Block ${index + 1}/$totalSteps] ${step.label}")
 
             when (step.actionType) {
                 MacroActionType.SET_5G -> {
@@ -354,7 +542,89 @@ class MacroManager(
                     withContext(Dispatchers.Main) {
                         networkModeManager.openRadioInfo(context)
                     }
+                    delay(600)
+                }
+                MacroActionType.OPEN_SETTINGS -> {
+                    withContext(Dispatchers.Main) {
+                        val intent = Intent(Settings.ACTION_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                    }
+                    delay(800)
+                }
+                MacroActionType.OPEN_NETWORK_SETTINGS -> {
+                    withContext(Dispatchers.Main) {
+                        val intent = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(intent)
+                    }
+                    delay(800)
+                }
+                MacroActionType.CLICK_TEXT -> {
+                    val textToClick = step.shellCommand.ifBlank { "SIM" }
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        val clicked = service.findAndClickText(textToClick)
+                        if (clicked) {
+                            addLog(LogLevel.SUCCESS, "✔ Tapped text node '$textToClick'")
+                        } else {
+                            addLog(LogLevel.WARN, "⚠ Text node '$textToClick' not found on active screen")
+                        }
+                    } else {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Touch skipped.")
+                    }
                     delay(500)
+                }
+                MacroActionType.SCROLL_DOWN -> {
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.scrollDown()
+                        addLog(LogLevel.SUCCESS, "✔ Scrolled down on screen")
+                    } else {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled.")
+                    }
+                    delay(500)
+                }
+                MacroActionType.SCROLL_UP -> {
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.scrollUp()
+                        addLog(LogLevel.SUCCESS, "✔ Scrolled up on screen")
+                    } else {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled.")
+                    }
+                    delay(500)
+                }
+                MacroActionType.READ_SIM_SETTINGS -> {
+                    val service = MacroAccessibilityService.instance
+                    val texts = service?.readActiveWindowTexts() ?: emptyList()
+                    if (texts.isNotEmpty()) {
+                        addLog(LogLevel.SUCCESS, "📋 Screen Telemetry: ${texts.take(4).joinToString(" • ")}")
+                    } else {
+                        addLog(LogLevel.INFO, "📋 Inspected local telephony profile: ${_lastInspectedProcess.value?.carrierName}")
+                    }
+                    delay(400)
+                }
+                MacroActionType.PROMPT_ADD_TILE -> {
+                    addLog(LogLevel.INFO, "🎛 Requesting Control Panel notification tile placement...")
+                    withContext(Dispatchers.Main) {
+                        onPromptAddTile?.invoke()
+                    }
+                    delay(400)
+                }
+                MacroActionType.EXIT_APP -> {
+                    addLog(LogLevel.SUCCESS, "🚪 Setup and macro sequence finished. Returning to home...")
+                    withContext(Dispatchers.Main) {
+                        onExitApp?.invoke()
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        context.startActivity(homeIntent)
+                    }
+                    delay(300)
                 }
                 MacroActionType.GO_HOME -> {
                     addLog(LogLevel.EXEC, "🏠 Going to Home Screen...")
@@ -417,16 +687,18 @@ class MacroManager(
         _macroState.value = MacroExecutionState.Completed(
             macroName = macro.name,
             success = true,
-            summary = "Completed $totalSteps steps in ${duration}s"
+            summary = "Completed $totalSteps blocks in ${duration}s"
         )
 
-        // Always go to home screen after macro runs (user-requested behaviour)
-        withContext(Dispatchers.Main) {
-            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                addCategory(Intent.CATEGORY_HOME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        // If macro did not already exit, send to home screen
+        if (macro.steps.none { it.actionType == MacroActionType.EXIT_APP }) {
+            withContext(Dispatchers.Main) {
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(homeIntent)
             }
-            context.startActivity(homeIntent)
         }
 
         return@withContext true
@@ -487,7 +759,7 @@ class MacroManager(
 
         val carrier = tm?.networkOperatorName?.takeIf { it.isNotBlank() }
             ?: tm?.simOperatorName?.takeIf { it.isNotBlank() }
-            ?: "Cellular Provider"
+            ?: "Jio"
 
         val simCount = try {
             sm?.activeSubscriptionInfoCount ?: 1

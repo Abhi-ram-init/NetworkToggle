@@ -427,9 +427,25 @@ class MainScreenViewModel(
         macroManager?.deleteMacro(macroId)
     }
 
-    fun runMacro(macro: RecordedMacro) {
+    fun buildAndSaveGuidedSimToggleMacro(carrierName: String = "Jio", targetModeName: String = "4G"): RecordedMacro? {
+        return macroManager?.buildAndSaveGuidedSimToggleMacro(carrierName, targetModeName)
+    }
+
+    fun createCustomBlockMacro(name: String, steps: List<MacroStep>): RecordedMacro? {
+        return macroManager?.createCustomBlockMacro(name, steps)
+    }
+
+    fun runMacro(
+        macro: RecordedMacro,
+        onPromptAddTile: (() -> Unit)? = null,
+        onExitApp: (() -> Unit)? = null
+    ) {
         viewModelScope.launch {
-            macroManager?.executeMacro(macro)
+            macroManager?.executeMacro(
+                macro = macro,
+                onPromptAddTile = onPromptAddTile,
+                onExitApp = onExitApp
+            )
         }
     }
 
