@@ -32,6 +32,7 @@ enum class MacroActionType(val displayName: String, val icon: String, val catego
     SCREEN_TAP("Tap Screen (X,Y)", "👆", "Touch Gestures"),
     SCREEN_SWIPE("Swipe Screen", "👉", "Touch Gestures"),
     CLICK_TEXT("Click On-Screen Text", "🔤", "Touch Gestures"),
+    FIND_AND_CLICK_ANY_OF("Click Any Matching Text (OEM-adaptive)", "🔍", "Touch Gestures"),
     SCROLL_DOWN("Scroll Down", "⬇", "Touch Gestures"),
     SCROLL_UP("Scroll Up", "⬆", "Touch Gestures"),
     OPEN_SETTINGS("Open Android Settings", "⚙", "Navigation"),
@@ -82,6 +83,7 @@ object MacroBlockCatalog {
 
         // Gestures & Touch
         MacroBlockCatalogItem("act_click_text", "Click On-Screen Text", "Find and click any text node on the display", "🔤", BlockCategory.GESTURES, MacroActionType.CLICK_TEXT, "Preferred network type"),
+        MacroBlockCatalogItem("act_click_any_of", "OEM-Adaptive Click", "Try multiple text labels — stops at first match (e.g. 'Connections,Network & Internet')", "🔍", BlockCategory.GESTURES, MacroActionType.FIND_AND_CLICK_ANY_OF, "Network & Internet,Connections"),
         MacroBlockCatalogItem("act_tap_xy", "Tap Coordinates (X, Y)", "Simulate screen touch at specific pixel coordinates", "👆", BlockCategory.GESTURES, MacroActionType.SCREEN_TAP, "540,960"),
         MacroBlockCatalogItem("act_scroll_down", "Scroll Down", "Scroll downward through settings or lists", "⬇", BlockCategory.GESTURES, MacroActionType.SCROLL_DOWN),
         MacroBlockCatalogItem("act_scroll_up", "Scroll Up", "Scroll upward through settings or lists", "⬆", BlockCategory.GESTURES, MacroActionType.SCROLL_UP),
@@ -310,6 +312,7 @@ class MacroManager(
             MacroActionType.SCREEN_TAP -> "Tap Screen (${shellCmd.ifBlank { "Center" }})"
             MacroActionType.SCREEN_SWIPE -> "Swipe Screen (${shellCmd.ifBlank { "Up" }})"
             MacroActionType.CLICK_TEXT -> "Click On-Screen: '$shellCmd'"
+            MacroActionType.FIND_AND_CLICK_ANY_OF -> "OEM Click: '${shellCmd.split(",").firstOrNull()?.trim() ?: shellCmd}'"
             MacroActionType.SCROLL_DOWN -> "Scroll Down"
             MacroActionType.SCROLL_UP -> "Scroll Up"
             MacroActionType.OPEN_SETTINGS -> "Open Android Settings"
@@ -389,10 +392,13 @@ class MacroManager(
     // -------------------------------------------------------------
 
     /**
-     * Builds and saves the guided sequence requested:
-     * Settings -> Network & Internet -> Select SIMs -> Select SIM (e.g. Jio)
-     * -> Read SIM settings -> Scroll to Preferred Network Type -> Select 4G
-     * -> Add Tile in Control Panel -> Exit Application
+     * Builds and saves the guided sequence:
+     * Settings → Network & Internet (OEM-adaptive) → Select SIM page → Select SIM (e.g. Jio)
+     * → Read SIM settings → Scroll to "Preferred Network Type" → Select 4G
+     * → Add Tile in Control Panel → Exit Application
+     *
+     * Uses [MacroActionType.FIND_AND_CLICK_ANY_OF] for OEM-adaptive label matching
+     * (Samsung "Connections", MIUI "SIM cards & mobile networks", stock "Network & Internet", etc.)
      */
     fun buildAndSaveGuidedSimToggleMacro(
         carrierName: String = "Jio",
@@ -400,70 +406,101 @@ class MacroManager(
     ): RecordedMacro {
         val simName = carrierName.ifBlank { "Jio" }
         val steps = listOf(
+            // Step 1: Open Android Settings (works on all OEMs)
             MacroStep(
-                actionType = MacroActionType.OPEN_NETWORK_SETTINGS,
-                label = "1. Open Network & Internet"
+                actionType = MacroActionType.OPEN_SETTINGS,
+                label = "1. Open Android Settings"
             ),
+            // Step 2: Wait for Settings to load
             MacroStep(
                 actionType = MacroActionType.WAIT_DELAY,
-                label = "Wait for Settings",
-                delaySeconds = 1
+                label = "Wait for Settings to load",
+                delaySeconds = 2
             ),
+            // Step 3: Click Network & Internet (OEM-adaptive)
+            // Samsung="Connections", MIUI="SIM cards & mobile networks", Stock="Network & Internet"
             MacroStep(
-                actionType = MacroActionType.CLICK_TEXT,
-                label = "2. Select SIMs & Mobile Network",
-                shellCommand = "SIMs"
+                actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
+                label = "2. Open Network/Connections",
+                shellCommand = "Network & Internet,Connections,SIM cards & mobile networks,Mobile network,Network"
             ),
+            // Step 4: Wait for network screen
             MacroStep(
                 actionType = MacroActionType.WAIT_DELAY,
-                label = "Wait for SIMs screen",
-                delaySeconds = 1
+                label = "Wait for Network screen",
+                delaySeconds = 2
             ),
+            // Step 5: Click the SIM/Mobile section entry (OEM-adaptive)
+            MacroStep(
+                actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
+                label = "3. Open SIMs & Mobile Network",
+                shellCommand = "SIMs,SIM & mobile data,Mobile network,SIM cards,Mobile data,SIM"
+            ),
+            // Step 6: Wait for SIM list screen
+            MacroStep(
+                actionType = MacroActionType.WAIT_DELAY,
+                label = "Wait for SIM list",
+                delaySeconds = 2
+            ),
+            // Step 7: Click the specific carrier SIM (e.g. Jio)
             MacroStep(
                 actionType = MacroActionType.CLICK_TEXT,
-                label = "3. Select $simName",
+                label = "4. Select $simName SIM",
                 shellCommand = simName
             ),
+            // Step 8: Wait for SIM settings screen
             MacroStep(
                 actionType = MacroActionType.WAIT_DELAY,
-                label = "Wait for $simName settings",
-                delaySeconds = 1
+                label = "Wait for SIM settings",
+                delaySeconds = 2
             ),
+            // Step 9: Read what's on screen (telemetry / verification)
             MacroStep(
                 actionType = MacroActionType.READ_SIM_SETTINGS,
-                label = "4. Read $simName Settings Automatically"
+                label = "5. Read $simName Settings Automatically"
             ),
+            // Step 10: Scroll down to reveal "Preferred network type"
             MacroStep(
                 actionType = MacroActionType.SCROLL_DOWN,
-                label = "5. Scroll to Preferred Network Type"
+                label = "6. Scroll to Preferred Network Type"
             ),
             MacroStep(
                 actionType = MacroActionType.WAIT_DELAY,
-                label = "Wait for scroll",
+                label = "Wait after scroll",
                 delaySeconds = 1
             ),
+            // Step 11: Click "Preferred network type" (OEM-adaptive label)
             MacroStep(
-                actionType = MacroActionType.CLICK_TEXT,
-                label = "6. Tap Preferred Network Type",
-                shellCommand = "Preferred network type"
+                actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
+                label = "7. Tap Preferred Network Type",
+                shellCommand = "Preferred network type,Network mode,Network type,Preferred network,Access network mode"
             ),
+            // Step 12: Wait for network mode dialog/screen
             MacroStep(
                 actionType = MacroActionType.WAIT_DELAY,
-                label = "Wait for mode dialog",
-                delaySeconds = 1
+                label = "Wait for mode picker",
+                delaySeconds = 2
             ),
+            // Step 13: Select the target mode (e.g. "LTE only", "4G only", "LTE/WCDMA")
             MacroStep(
-                actionType = MacroActionType.CLICK_TEXT,
-                label = "7. Select $targetModeName",
-                shellCommand = targetModeName
+                actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
+                label = "8. Select $targetModeName Mode",
+                shellCommand = when (targetModeName.uppercase()) {
+                    "4G" -> "LTE only,4G only,4G LTE,LTE/WCDMA/GSM,LTE,4G"
+                    "5G" -> "NR/LTE,5G/4G,5G NR,NR only,5G"
+                    "AUTO" -> "5G/4G/3G/2G,LTE/WCDMA/GSM,Auto,Automatic"
+                    else -> targetModeName
+                }
             ),
+            // Step 14: Add notification tile to Control Panel
             MacroStep(
                 actionType = MacroActionType.PROMPT_ADD_TILE,
-                label = "8. Add Notification Tile in Control Panel"
+                label = "9. Add Notification Tile in Control Panel"
             ),
+            // Step 15: Exit app
             MacroStep(
                 actionType = MacroActionType.EXIT_APP,
-                label = "9. Exit Application & Setup Done"
+                label = "10. Setup Complete — Exit App"
             )
         )
 
@@ -473,7 +510,7 @@ class MacroManager(
         )
         _savedMacros.value = _savedMacros.value.filter { it.name != macro.name } + macro
         persistSavedMacros()
-        addLog(LogLevel.SUCCESS, "💾 Created Guided Macro: '${macro.name}' with ${macro.steps.size} automated blocks.")
+        addLog(LogLevel.SUCCESS, "💾 Created Guided Macro: '${macro.name}' with ${macro.steps.size} OEM-adaptive blocks.")
         return macro
     }
 
@@ -551,31 +588,72 @@ class MacroManager(
                         }
                         context.startActivity(intent)
                     }
-                    delay(800)
+                    // Wait for Settings package to appear (event-driven)
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.waitForWindowPackage("com.android.settings", 4000L)
+                    } else {
+                        delay(1500)
+                    }
                 }
                 MacroActionType.OPEN_NETWORK_SETTINGS -> {
+                    // Use ACTION_SETTINGS (main settings screen) for reliable cross-OEM behaviour.
+                    // ACTION_WIRELESS_SETTINGS opens Wi-Fi screen on stock Android, not Network & Internet.
                     withContext(Dispatchers.Main) {
-                        val intent = Intent(Settings.ACTION_WIRELESS_SETTINGS).apply {
+                        val intent = Intent(Settings.ACTION_SETTINGS).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
                         context.startActivity(intent)
                     }
-                    delay(800)
+                    val service = MacroAccessibilityService.instance
+                    if (service != null) {
+                        service.waitForWindowPackage("com.android.settings", 4000L)
+                    } else {
+                        delay(1500)
+                    }
                 }
                 MacroActionType.CLICK_TEXT -> {
                     val textToClick = step.shellCommand.ifBlank { "SIM" }
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        val clicked = service.findAndClickText(textToClick)
+                        // Use suspend retry with scroll-fallback
+                        val clicked = service.findAndClickTextSuspend(
+                            text = textToClick,
+                            maxAttempts = 4,
+                            retryDelayMs = 700L
+                        )
                         if (clicked) {
                             addLog(LogLevel.SUCCESS, "✔ Tapped text node '$textToClick'")
                         } else {
-                            addLog(LogLevel.WARN, "⚠ Text node '$textToClick' not found on active screen")
+                            addLog(LogLevel.WARN, "⚠ Text node '$textToClick' not found after retries")
                         }
                     } else {
                         addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Touch skipped.")
                     }
-                    delay(500)
+                    delay(400)
+                }
+                MacroActionType.FIND_AND_CLICK_ANY_OF -> {
+                    // shellCommand is a comma-separated list of candidate texts
+                    val candidates = step.shellCommand
+                        .split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotBlank() }
+                    val service = MacroAccessibilityService.instance
+                    if (service != null && candidates.isNotEmpty()) {
+                        val clicked = service.findAndClickAnyOf(
+                            candidates = candidates,
+                            maxScrollAttempts = 3,
+                            retryDelayMs = 600L
+                        )
+                        if (clicked) {
+                            addLog(LogLevel.SUCCESS, "✔ OEM-adaptive click succeeded")
+                        } else {
+                            addLog(LogLevel.WARN, "⚠ None of [${candidates.take(3).joinToString(", ")}…] found on screen")
+                        }
+                    } else if (service == null) {
+                        addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. OEM-click skipped.")
+                    }
+                    delay(400)
                 }
                 MacroActionType.SCROLL_DOWN -> {
                     val service = MacroAccessibilityService.instance
@@ -601,7 +679,7 @@ class MacroManager(
                     val service = MacroAccessibilityService.instance
                     val texts = service?.readActiveWindowTexts() ?: emptyList()
                     if (texts.isNotEmpty()) {
-                        addLog(LogLevel.SUCCESS, "📋 Screen Telemetry: ${texts.take(4).joinToString(" • ")}")
+                        addLog(LogLevel.SUCCESS, "📋 Screen Telemetry: ${texts.take(5).joinToString(" • ")}")
                     } else {
                         addLog(LogLevel.INFO, "📋 Inspected local telephony profile: ${_lastInspectedProcess.value?.carrierName}")
                     }

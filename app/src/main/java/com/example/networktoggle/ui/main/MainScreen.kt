@@ -755,9 +755,8 @@ private fun CustomMacroSection(
 ) {
     val context = LocalContext.current
     val isRunning = uiState.macroState is MacroExecutionState.Running
-    val isAccessibilityActive = remember(uiState) {
-        MacroAccessibilityService.isAccessibilityEnabled(context)
-    }
+    val serviceActiveFlow by MacroAccessibilityService.isServiceActive.collectAsStateWithLifecycle()
+    val isAccessibilityActive = serviceActiveFlow || MacroAccessibilityService.isAccessibilityEnabled(context)
 
     val detectedCarrier = uiState.inspectedProcess?.carrierName?.takeIf { it.isNotBlank() } ?: "Jio"
 
@@ -1020,7 +1019,11 @@ private fun CustomMacroSection(
                             color = Color(0xFFEF4444).copy(alpha = 0.15f),
                             border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.3f)),
                             modifier = Modifier.clickable {
-                                onStartRecording("Touch Macro ${uiState.savedMacros.size + 1}")
+                                if (!isAccessibilityActive) {
+                                    isPermissionDialogVisible = true
+                                } else {
+                                    onStartRecording("Touch Macro ${uiState.savedMacros.size + 1}")
+                                }
                             }
                         ) {
                             Text(
@@ -1036,6 +1039,99 @@ private fun CustomMacroSection(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
+
+            // 0. LIVE MACRO EXECUTION PROGRESS BANNER
+            if (uiState.macroState is MacroExecutionState.Running) {
+                val runState = uiState.macroState
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color(0xFF10B981)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "RUNNING: ${runState.macroName.uppercase()}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = Color(0xFF10B981),
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                            Text(
+                                text = "Step ${runState.currentStepIndex}/${runState.totalSteps}",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = runState.stepLabel,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        LinearProgressIndicator(
+                            progress = { runState.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = Color(0xFF10B981),
+                            trackColor = Color.White.copy(alpha = 0.1f)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            } else if (uiState.macroState is MacroExecutionState.Completed) {
+                val compState = uiState.macroState
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (compState.success) Color(0xFF10B981).copy(alpha = 0.1f) else Color(0xFFEF4444).copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, if (compState.success) Color(0xFF10B981).copy(alpha = 0.35f) else Color(0xFFEF4444).copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = if (compState.success) "✅" else "⚠️", fontSize = 16.sp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (compState.success) "Macro Finished Successfully" else "Macro Finished with Warnings",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (compState.success) Color(0xFF10B981) else Color(0xFFEF4444)
+                            )
+                            Text(
+                                text = compState.summary,
+                                fontSize = 10.sp,
+                                color = Color.White.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
 
             // 1. Accessibility Permission Status / Onboarding Banner
             if (!isAccessibilityActive) {
@@ -1607,7 +1703,13 @@ private fun CustomMacroSection(
 
                                 // Play Button
                                 Button(
-                                    onClick = { onRunMacro(macro) },
+                                    onClick = {
+                                        if (!isAccessibilityActive) {
+                                            isPermissionDialogVisible = true
+                                        } else {
+                                            onRunMacro(macro)
+                                        }
+                                    },
                                     enabled = !isRunning,
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = accentColor),

@@ -39,6 +39,7 @@ class MainScreenViewModelTest {
         assertTrue(actions.contains(MacroActionType.SCREEN_TAP))
         assertTrue(actions.contains(MacroActionType.SCREEN_SWIPE))
         assertTrue(actions.contains(MacroActionType.CLICK_TEXT))
+        assertTrue(actions.contains(MacroActionType.FIND_AND_CLICK_ANY_OF))
         assertTrue(actions.contains(MacroActionType.SCROLL_DOWN))
         assertTrue(actions.contains(MacroActionType.OPEN_NETWORK_SETTINGS))
         assertTrue(actions.contains(MacroActionType.READ_SIM_SETTINGS))
