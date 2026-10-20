@@ -56,6 +56,7 @@ data class MainScreenUiState(
     val macroLogs: List<MacroLogEntry> = emptyList(),
     val inspectedProcess: ProcessTelephonyInfo? = null,
     val terminalState: AdbTerminalState = AdbTerminalState(),
+    val popupMessage: String? = null,
 ) {
     val currentConnectedMode: NetworkMode
         get() = if (liveNetwork.is5G) NetworkMode.FIVE_G else NetworkMode.FOUR_G
@@ -285,7 +286,8 @@ class MainScreenViewModel(
                 _uiState.update {
                     it.copy(
                         liveNetwork = finalLive,
-                        switchStatus = SwitchStatus.Failed(targetMode, finalLive.displayName)
+                        switchStatus = SwitchStatus.Failed(targetMode, finalLive.displayName),
+                        popupMessage = "⚠️ Network toggle could not switch to ${targetMode.label()}. Modem remained on ${finalLive.displayName}. Tap Force Menu (*#*#4636#*#*) if needed."
                     )
                 }
             } else {
@@ -298,6 +300,14 @@ class MainScreenViewModel(
                 }
             }
         }
+    }
+
+    fun showPopupMessage(msg: String) {
+        _uiState.update { it.copy(popupMessage = msg) }
+    }
+
+    fun dismissPopupMessage() {
+        _uiState.update { it.copy(popupMessage = null) }
     }
 
     fun dismissStatus() {
@@ -329,7 +339,10 @@ class MainScreenViewModel(
             macroManager?.executeMacro(
                 macro = macro,
                 onPromptAddTile = onPromptAddTile,
-                onExitApp = onExitApp
+                onExitApp = onExitApp,
+                onToggleFailedMessage = { msg ->
+                    showPopupMessage(msg)
+                }
             )
         }
     }

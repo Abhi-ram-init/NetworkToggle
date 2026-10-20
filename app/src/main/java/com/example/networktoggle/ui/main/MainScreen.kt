@@ -14,6 +14,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,7 +44,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -62,7 +66,8 @@ import com.example.networktoggle.terminal.TerminalLineType
 enum class NavigationTab(val title: String, val icon: String) {
     SWITCHER("Toggle", "⚡"),
     MACRO("Macro", "🪄"),
-    TERMINAL("ADB Terminal", "💻")
+    TERMINAL("ADB", "💻"),
+    SETTINGS("Settings", "⚙️")
 }
 
 @Composable
@@ -104,6 +109,15 @@ fun MainScreen(
         }
     }
 
+    LaunchedEffect(uiState.popupMessage) {
+        val msg = uiState.popupMessage
+        if (msg != null) {
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+            kotlinx.coroutines.delay(4500)
+            viewModel.dismissPopupMessage()
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -124,7 +138,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 18.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Sleek Minimal Top Bar
@@ -136,7 +150,7 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Minimalist 3-Pill Navigation Bar
+            // Minimalist 4-Pill Navigation Bar
             MinimalSegmentedNavBar(
                 currentTab = selectedTab,
                 accentColor = primaryColor,
@@ -198,7 +212,68 @@ fun MainScreen(
                                 onSetMode = viewModel::setNetworkModeViaAdb
                             )
                         }
+                        NavigationTab.SETTINGS -> {
+                            SettingsScreen(
+                                uiState = uiState,
+                                accentColor = primaryColor,
+                                onRequestPhonePermission = {
+                                    permissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
+                                },
+                                onRequestAdbPermission = viewModel::requestAdbPermission,
+                                onOpenAccessibilitySettings = {
+                                    MacroAccessibilityService.openAccessibilitySettings(context)
+                                },
+                                onOpenRadioInfo = { viewModel.openRadioInfo(context) },
+                                onOpenMobileSettings = { viewModel.openMobileSettings(context) },
+                                onRequestAddTile = { isMacro ->
+                                    viewModel.requestAddTileToControlPanel(isMacro, context) { msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
                     }
+                }
+            }
+        }
+
+        // Floating Top Popup Alert (Shows on toggle failure or critical notices; DOES NOT CLOSE APP)
+        AnimatedVisibility(
+            visible = uiState.popupMessage != null,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { -50 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { -50 }),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 10.dp, start = 16.dp, end = 16.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF1E293B),
+                border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.6f)),
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = "⚠️", fontSize = 14.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = uiState.popupMessage ?: "",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "DISMISS",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { viewModel.dismissPopupMessage() }
+                    )
                 }
             }
         }
@@ -312,17 +387,18 @@ private fun MinimalSegmentedNavBar(
                         .clickable { onTabSelected(tab) }
                 ) {
                     Row(
-                        modifier = Modifier.padding(vertical = 8.dp),
+                        modifier = Modifier.padding(vertical = 8.dp, horizontal = 2.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = tab.icon, fontSize = 12.sp)
-                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(text = tab.icon, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
                             text = tab.title,
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = if (isSelected) FontWeight.Black else FontWeight.SemiBold,
-                            color = targetText
+                            color = targetText,
+                            maxLines = 1
                         )
                     }
                 }
@@ -1201,6 +1277,286 @@ private fun QuickActionButton(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 4.dp)
             )
+        }
+    }
+}
+
+// =====================================================================
+// SCREEN 4: ⚙️ SETTINGS & PERMISSIONS HUB
+// =====================================================================
+@Composable
+private fun SettingsScreen(
+    uiState: MainScreenUiState,
+    accentColor: Color,
+    onRequestPhonePermission: () -> Unit,
+    onRequestAdbPermission: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
+    onOpenRadioInfo: () -> Unit,
+    onOpenMobileSettings: () -> Unit,
+    onRequestAddTile: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val isAccessibilityActive = MacroAccessibilityService.isAccessibilityEnabled(context)
+    val isAdbAuthorized = uiState.terminalState.isAuthorized || uiState.isDirectToggleGranted
+
+    // Section 1: Permissions & Access Status
+    Text(
+        text = "PERMISSIONS & ACCESS STATUS",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        color = Color(0xFF38BDF8),
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+    )
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF101624),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 1. Telephony Permission
+            PermissionStatusRow(
+                title = "Telephony Hardware Access",
+                subtitle = if (uiState.hasPermission) "Granted • Live 5G/4G radio telemetry operational" else "Action needed • Required for live network reading",
+                isGranted = uiState.hasPermission,
+                actionLabel = if (!uiState.hasPermission) "GRANT" else null,
+                onAction = onRequestPhonePermission
+            )
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+
+            // 2. On-Device ADB / Shizuku
+            PermissionStatusRow(
+                title = "On-Device ADB (Shizuku)",
+                subtitle = if (isAdbAuthorized) "Authorized • Instant background frequency switching ready" else "Not authorized • Enables direct 1-tap mode toggles",
+                isGranted = isAdbAuthorized,
+                actionLabel = if (!isAdbAuthorized) "AUTHORIZE" else null,
+                onAction = onRequestAdbPermission
+            )
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+
+            // 3. Accessibility Automation
+            PermissionStatusRow(
+                title = "Accessibility Automation",
+                subtitle = if (isAccessibilityActive) "Active • Automated touch navigation & SIM clicks ready" else "Inactive • Automates Settings navigation without ADB",
+                isGranted = isAccessibilityActive,
+                actionLabel = if (!isAccessibilityActive) "ENABLE" else null,
+                onAction = onOpenAccessibilitySettings
+            )
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+
+            // 4. Kernel Root Access
+            PermissionStatusRow(
+                title = "Kernel Root (SU)",
+                subtitle = if (uiState.isKernelRootDetected) "Detected • Elevated SU shell command execution available" else "Not detected • Standard secure Android sandbox active",
+                isGranted = uiState.isKernelRootDetected,
+                actionLabel = null,
+                onAction = {}
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Section 2: Quick Settings / Control Panel Tiles
+    Text(
+        text = "CONTROL PANEL TILES",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        color = Color(0xFF38BDF8),
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+    )
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF101624),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            TileOptionRow(
+                title = "Network Toggle Tile",
+                subtitle = "1-Tap toggle 5G / 4G directly in notification panel",
+                buttonText = "ADD TILE",
+                onAdd = { onRequestAddTile(false) }
+            )
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
+            TileOptionRow(
+                title = "Network Macro Tile",
+                subtitle = "Trigger automated guided SIM routine from control panel",
+                buttonText = "ADD TILE",
+                onAdd = { onRequestAddTile(true) }
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Section 3: Cellular Testing & Diagnostic Tools
+    Text(
+        text = "SYSTEM RADIO MENUS",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        color = Color(0xFF38BDF8),
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+    )
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF101624),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier.weight(1f).clickable { onOpenRadioInfo() }
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(text = "🔧 Force Radio Menu", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "*#*#4636#*#* Testing activity", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+            }
+        }
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF101624),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+            modifier = Modifier.weight(1f).clickable { onOpenMobileSettings() }
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(text = "🌐 SIMs & Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "System operator settings", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // Section 4: One-time PC ADB Command
+    Text(
+        text = "MANUAL PC ADB COMMAND",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        color = Color(0xFF38BDF8),
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+    )
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF070A12),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = "If not using Shizuku, run this once via computer terminal to grant background switching:",
+                fontSize = 9.sp,
+                color = Color.White.copy(alpha = 0.6f)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            val adbCmd = "adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = adbCmd,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFF38BDF8),
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Button(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(adbCmd))
+                        Toast.makeText(context, "Copied ADB command to clipboard!", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text("COPY", color = Color(0xFF38BDF8), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(20.dp))
+}
+
+@Composable
+private fun PermissionStatusRow(
+    title: String,
+    subtitle: String,
+    isGranted: Boolean,
+    actionLabel: String?,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(if (isGranted) Color(0xFF10B981) else Color(0xFFF59E0B))
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(text = subtitle, fontSize = 9.sp, color = Color.White.copy(alpha = 0.55f))
+        }
+        if (actionLabel != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF38BDF8).copy(alpha = 0.15f),
+                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                modifier = Modifier.clickable { onAction() }
+            ) {
+                Text(
+                    text = actionLabel,
+                    color = Color(0xFF38BDF8),
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TileOptionRow(
+    title: String,
+    subtitle: String,
+    buttonText: String,
+    onAdd: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Text(text = subtitle, fontSize = 9.sp, color = Color.White.copy(alpha = 0.55f))
+        }
+        Spacer(modifier = Modifier.width(8.dp))
+        Button(
+            onClick = onAdd,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+            modifier = Modifier.height(28.dp)
+        ) {
+            Text(buttonText, color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black)
         }
     }
 }

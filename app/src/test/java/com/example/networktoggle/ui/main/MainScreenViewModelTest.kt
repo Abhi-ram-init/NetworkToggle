@@ -105,4 +105,39 @@ class MainScreenViewModelTest {
         assertEquals(1, running.currentStepIndex)
         assertEquals(true, completed.success)
     }
+
+    @Test
+    fun navigationTabs_include_settings_and_terminal() {
+        val tabs = NavigationTab.entries
+        assertEquals(4, tabs.size)
+        assertTrue(tabs.contains(NavigationTab.SWITCHER))
+        assertTrue(tabs.contains(NavigationTab.MACRO))
+        assertTrue(tabs.contains(NavigationTab.TERMINAL))
+        assertTrue(tabs.contains(NavigationTab.SETTINGS))
+    }
+
+    @Test
+    fun uiState_supports_popup_message_for_failed_toggles() {
+        var state = MainScreenUiState()
+        assertEquals(null, state.popupMessage)
+
+        val failMessage = "⚠️ Network toggle could not complete automatically. Staying in app."
+        state = state.copy(popupMessage = failMessage)
+        assertEquals(failMessage, state.popupMessage)
+
+        // Dismiss popup
+        state = state.copy(popupMessage = null)
+        assertEquals(null, state.popupMessage)
+    }
+
+    @Test
+    fun macro_completed_with_warning_holds_failure_summary() {
+        val completedFailed = MacroExecutionState.Completed(
+            macroName = "Auto-Toggle Jio to 4G",
+            success = false,
+            summary = "Finished with warning: Option 'Preferred network type' not found on screen"
+        )
+        assertEquals(false, completedFailed.success)
+        assertTrue(completedFailed.summary.contains("warning"))
+    }
 }

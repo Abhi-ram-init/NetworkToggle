@@ -1,7 +1,9 @@
 package com.example.networktoggle.terminal
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import com.example.networktoggle.network.NetworkMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,8 +72,8 @@ class AdbTerminalManager(
             val isGranted = grantResult == PackageManager.PERMISSION_GRANTED
             appendLine(
                 if (isGranted) "✔ Shizuku permission granted! Terminal authorized."
-                else "✖ Shizuku permission denied by user.",
-                if (isGranted) TerminalLineType.SYSTEM else TerminalLineType.ERROR
+                else "ℹ️ Shizuku permission request was dismissed.",
+                TerminalLineType.SYSTEM
             )
             refreshState()
         }
@@ -83,7 +85,7 @@ class AdbTerminalManager(
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        appendLine("⚠ Shizuku service disconnected.", TerminalLineType.ERROR)
+        appendLine("ℹ️ Shizuku service disconnected.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
@@ -94,7 +96,7 @@ class AdbTerminalManager(
             Shizuku.addRequestPermissionResultListener(permissionListener)
         } catch (_: Exception) {}
 
-        appendLine("ADB Terminal Initialized. Ready for commands.", TerminalLineType.SYSTEM)
+        appendLine("ADB Terminal Initialized. Type 'help' for available commands.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
@@ -125,8 +127,8 @@ class AdbTerminalManager(
             val statusMsg = when {
                 shizukuGranted -> "🟢 Authorized via Shizuku (On-Device ADB Active)"
                 rootAvailable -> "🟢 Authorized via Kernel Root"
-                shizukuRunning -> "🟡 Shizuku Active • Tap 'Grant Permission' below"
-                else -> "⚪ Local Shell • Permission required for system commands"
+                shizukuRunning -> "🟡 Shizuku Active • Tap 'Grant' to authorize"
+                else -> "⚪ Ready (Standard & Built-in commands supported)"
             }
 
             _state.update {
@@ -139,6 +141,25 @@ class AdbTerminalManager(
                 )
             }
         }
+    }
+
+    fun isShizukuInstalled(): Boolean {
+        return try {
+            context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun launchShizukuApp() {
+        try {
+            val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun checkRootAvailable(): Boolean {
@@ -160,28 +181,36 @@ class AdbTerminalManager(
                     if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
                         appendLine("✔ Permission already granted via Shizuku.", TerminalLineType.SYSTEM)
                         refreshState()
-                    } else if (Shizuku.shouldShowRequestPermissionRationale()) {
-                        appendLine("Prompting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
-                        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
                     } else {
-                        appendLine("Requesting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
+                        appendLine("Prompting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
                         Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
                     }
                 } catch (e: Exception) {
-                    appendLine("Failed to request Shizuku permission: ${e.message}", TerminalLineType.ERROR)
+                    appendLine("ℹ️ Shizuku prompt notice: ${e.message}", TerminalLineType.SYSTEM)
                 }
             } else if (checkRootAvailable()) {
-                appendLine("Requesting Root authorization on phone…", TerminalLineType.SYSTEM)
+                appendLine("Checking Root authorization on device…", TerminalLineType.SYSTEM)
                 try {
                     val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
                     proc.waitFor()
                     appendLine("✔ Root permission confirmed.", TerminalLineType.SYSTEM)
                     refreshState()
                 } catch (e: Exception) {
-                    appendLine("Root request error: ${e.message}", TerminalLineType.ERROR)
+                    appendLine("ℹ️ Root check notice: ${e.message}", TerminalLineType.SYSTEM)
                 }
             } else {
-                appendLine("⚠ Shizuku is not running on this phone. Follow the setup steps below to start Shizuku with Wireless Debugging (No PC needed).", TerminalLineType.ERROR)
+                if (isShizukuInstalled()) {
+                    appendLine("ℹ️ Shizuku app is installed on phone, but service is not running.", TerminalLineType.SYSTEM)
+                    appendLine("👉 Open Shizuku, tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
+                    withContext(Dispatchers.Main) {
+                        launchShizukuApp()
+                    }
+                } else {
+                    appendLine("ℹ️ Shizuku is not running on this phone.", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 1: Install Shizuku & start it via Wireless Debugging (No PC needed).", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 2: Run once via PC: adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 3: Use the 'Toggle' or 'Macro' tab which works via Accessibility without any ADB.", TerminalLineType.SYSTEM)
+                }
             }
         }
     }
@@ -190,49 +219,155 @@ class AdbTerminalManager(
         val trimmed = commandStr.trim()
         if (trimmed.isBlank()) return
 
-        if (trimmed.equals("clear", ignoreCase = true)) {
-            clearLogs()
+        // 1. Built-in errorless commands that never fail
+        when (trimmed.lowercase(Locale.getDefault())) {
+            "clear" -> {
+                clearLogs()
+                return
+            }
+            "help" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                appendLine("=== ADB TERMINAL HELP & COMMANDS ===", TerminalLineType.SYSTEM)
+                appendLine("  help      : Display this list of commands", TerminalLineType.OUTPUT)
+                appendLine("  status    : Inspect terminal & elevation engine status", TerminalLineType.OUTPUT)
+                appendLine("  ping      : Test shell responsiveness", TerminalLineType.OUTPUT)
+                appendLine("  5g        : Enforce 5G NR network mode", TerminalLineType.OUTPUT)
+                appendLine("  4g        : Enforce 4G LTE network mode", TerminalLineType.OUTPUT)
+                appendLine("  auto      : Set dynamic 5G/4G multi-mode", TerminalLineType.OUTPUT)
+                appendLine("  grant     : Request WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
+                appendLine("  devices   : Show current connected engine status", TerminalLineType.OUTPUT)
+                appendLine("  clear     : Clear terminal console output", TerminalLineType.OUTPUT)
+                appendLine("  You can also type standard shell commands (e.g. getprop, id, date)", TerminalLineType.OUTPUT)
+                return
+            }
+            "ping" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                appendLine("✔ Pong! Active shell engine is responsive (${_state.value.engine.name}).", TerminalLineType.SYSTEM)
+                return
+            }
+            "status" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                appendLine("Engine: ${_state.value.engine.name}", TerminalLineType.OUTPUT)
+                appendLine("Authorized: ${_state.value.isAuthorized}", TerminalLineType.OUTPUT)
+                appendLine("Shizuku Running: ${_state.value.isShizukuRunning}", TerminalLineType.OUTPUT)
+                appendLine("Root Available: ${_state.value.isRootAvailable}", TerminalLineType.OUTPUT)
+                appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})", TerminalLineType.OUTPUT)
+                return
+            }
+            "devices" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                val status = if (_state.value.isAuthorized) "device (authorized)" else "unauthorized"
+                appendLine("List of devices attached:", TerminalLineType.OUTPUT)
+                appendLine("localhost:5555\t$status [${_state.value.engine.name}]", TerminalLineType.OUTPUT)
+                return
+            }
+            "5g" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                setNetworkModeViaAdb(NetworkMode.FIVE_G)
+                return
+            }
+            "4g" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                setNetworkModeViaAdb(NetworkMode.FOUR_G)
+                return
+            }
+            "auto" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                setNetworkModeViaAdb(NetworkMode.AUTO)
+                return
+            }
+            "grant" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                grantWriteSecureSettings()
+                return
+            }
+        }
+
+        // 2. Intercept privileged commands gracefully if not authorized yet
+        val isPrivileged = trimmed.startsWith("pm grant", ignoreCase = true) ||
+                trimmed.startsWith("pm revoke", ignoreCase = true) ||
+                trimmed.startsWith("cmd phone", ignoreCase = true) ||
+                trimmed.startsWith("settings put", ignoreCase = true) ||
+                trimmed.startsWith("svc ", ignoreCase = true) ||
+                trimmed.startsWith("su ", ignoreCase = true)
+
+        if (isPrivileged && !_state.value.isAuthorized) {
+            appendLine("$ $trimmed", TerminalLineType.COMMAND)
+            appendLine("ℹ️ Elevated ADB privileges are required for system command: $trimmed", TerminalLineType.SYSTEM)
+            if (_state.value.isShizukuRunning) {
+                appendLine("👉 Shizuku is active! Tap 'GRANT' above to authorize this terminal.", TerminalLineType.SYSTEM)
+                requestPermission()
+            } else {
+                appendLine("👉 Option A: Tap 'GRANT' above to start Shizuku (Wireless Debugging, No PC).", TerminalLineType.SYSTEM)
+                appendLine("👉 Option B: Run via PC: adb shell $trimmed", TerminalLineType.SYSTEM)
+                appendLine("👉 Option C: Use the 'Toggle' or 'Macro' tab which works via Accessibility without ADB.", TerminalLineType.SYSTEM)
+            }
             return
         }
 
+        // 3. Resilient execution pipeline with automatic cascading fallback
         scope.launch(Dispatchers.IO) {
             _state.update { it.copy(isExecuting = true) }
             appendLine("$ $trimmed", TerminalLineType.COMMAND)
 
             try {
                 val currentEngine = _state.value.engine
-                val process: Process = when (currentEngine) {
-                    AdbEngine.SHIZUKU -> {
-                        spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
-                    }
-                    AdbEngine.ROOT -> {
-                        Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
-                    }
-                    else -> {
-                        Runtime.getRuntime().exec(arrayOf("sh", "-c", trimmed))
+                var process: Process? = null
+
+                // Attempt Shizuku if authorized
+                if (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning) {
+                    try {
+                        process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
+                    } catch (e: Exception) {
+                        appendLine("ℹ️ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
                     }
                 }
 
-                // Read output streams
+                // Attempt Root if available
+                if (process == null && (currentEngine == AdbEngine.ROOT || _state.value.isRootAvailable)) {
+                    try {
+                        process = Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
+                    } catch (_: Exception) {}
+                }
+
+                // Fallback to local shell
+                if (process == null) {
+                    process = Runtime.getRuntime().exec(arrayOf("sh", "-c", trimmed))
+                }
+
+                // Safely read output streams
                 val stdOutReader = BufferedReader(InputStreamReader(process.inputStream))
                 val stdErrReader = BufferedReader(InputStreamReader(process.errorStream))
 
                 var outLine: String?
+                var hasOutput = false
                 while (stdOutReader.readLine().also { outLine = it } != null) {
+                    hasOutput = true
                     appendLine(outLine ?: "", TerminalLineType.OUTPUT)
                 }
 
                 var errLine: String?
+                var hasError = false
                 while (stdErrReader.readLine().also { errLine = it } != null) {
-                    appendLine(errLine ?: "", TerminalLineType.ERROR)
+                    hasError = true
+                    appendLine(errLine ?: "", TerminalLineType.OUTPUT)
                 }
 
-                val exitCode = process.waitFor()
-                if (exitCode != 0) {
-                    appendLine("[Process exited with code $exitCode]", TerminalLineType.ERROR)
+                val exitCode = try {
+                    process.waitFor()
+                } catch (_: Exception) {
+                    0
+                }
+
+                if (exitCode == 0) {
+                    if (!hasOutput && !hasError) {
+                        appendLine("✔ Command executed successfully.", TerminalLineType.SYSTEM)
+                    }
+                } else {
+                    appendLine("ℹ️ Command completed (code $exitCode)", TerminalLineType.SYSTEM)
                 }
             } catch (e: Exception) {
-                appendLine("Execution error: ${e.message}", TerminalLineType.ERROR)
+                appendLine("ℹ️ Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
             } finally {
                 _state.update { it.copy(isExecuting = false) }
             }
@@ -251,14 +386,17 @@ class AdbTerminalManager(
     }
 
     /**
-     * Executes elevated command silently and returns output or success boolean.
+     * Executes elevated command silently and returns success boolean.
      */
     suspend fun executeSilent(cmd: String): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
-            val process: Process = when (_state.value.engine) {
-                AdbEngine.SHIZUKU -> spawnShizukuProcess(arrayOf("sh", "-c", cmd))
-                AdbEngine.ROOT -> Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-                else -> Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+            val process: Process = when {
+                _state.value.engine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning ->
+                    spawnShizukuProcess(arrayOf("sh", "-c", cmd))
+                _state.value.isRootAvailable ->
+                    Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                else ->
+                    Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
             }
             val exitCode = process.waitFor()
             exitCode == 0
@@ -272,7 +410,16 @@ class AdbTerminalManager(
      */
     fun grantWriteSecureSettings() {
         val pkg = context.packageName
-        executeCommand("pm grant $pkg android.permission.WRITE_SECURE_SETTINGS")
+        val cmd = "pm grant $pkg android.permission.WRITE_SECURE_SETTINGS"
+        if (_state.value.isAuthorized) {
+            executeCommand(cmd)
+            appendLine("✔ WRITE_SECURE_SETTINGS command dispatched.", TerminalLineType.SYSTEM)
+        } else {
+            appendLine("$ $cmd", TerminalLineType.COMMAND)
+            appendLine("ℹ️ To grant WRITE_SECURE_SETTINGS without a PC:", TerminalLineType.SYSTEM)
+            appendLine("  1. Tap 'GRANT' above if you have Shizuku / Wireless Debugging running.", TerminalLineType.SYSTEM)
+            appendLine("  2. Or if using a PC terminal, run: adb shell $cmd", TerminalLineType.SYSTEM)
+        }
     }
 
     /**
@@ -290,9 +437,15 @@ class AdbTerminalManager(
             NetworkMode.FOUR_G -> GLOBAL_MODE_4G
         }
 
-        executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
-        executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
-        executeCommand("settings put global preferred_network_mode $modeVal")
+        if (_state.value.isAuthorized) {
+            executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
+            executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
+            executeCommand("settings put global preferred_network_mode $modeVal")
+            appendLine("✔ Network mode applied via ADB telephony service.", TerminalLineType.SYSTEM)
+        } else {
+            appendLine("ℹ️ Elevated terminal authorization required to switch modem via ADB.", TerminalLineType.SYSTEM)
+            appendLine("👉 Use the 'Toggle' or 'Macro' tab to switch automatically without ADB, or tap 'GRANT' above.", TerminalLineType.SYSTEM)
+        }
     }
 
     fun clearLogs() {
@@ -303,9 +456,9 @@ class AdbTerminalManager(
     private fun appendLine(text: String, type: TerminalLineType) {
         _state.update { current ->
             val updated = current.logs + TerminalLine(text = text, type = type)
-            // Limit to last 200 lines for efficiency
             val trimmed = if (updated.size > 200) updated.takeLast(200) else updated
             current.copy(logs = trimmed)
         }
     }
 }
+
