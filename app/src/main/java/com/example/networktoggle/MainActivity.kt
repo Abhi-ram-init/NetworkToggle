@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
+import com.example.networktoggle.macro.MacroManager
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.network.NetworkModeManager
 import com.example.networktoggle.theme.NetworkToggleTheme
@@ -23,12 +24,13 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val networkModeManager = NetworkModeManager(applicationContext)
+        val macroManager = MacroManager(applicationContext, networkModeManager)
         viewModel = ViewModelProvider(
             this,
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
-                    return MainScreenViewModel(networkModeManager) as T
+                    return MainScreenViewModel(networkModeManager, macroManager) as T
                 }
             }
         )[MainScreenViewModel::class.java]
