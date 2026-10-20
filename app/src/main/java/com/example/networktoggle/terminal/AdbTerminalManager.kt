@@ -201,9 +201,9 @@ class AdbTerminalManager(
 
             try {
                 val currentEngine = _state.value.engine
-                val process = when (currentEngine) {
+                val process: Process = when (currentEngine) {
                     AdbEngine.SHIZUKU -> {
-                        Shizuku.newProcess(arrayOf("sh", "-c", trimmed), null, null)
+                        spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
                     }
                     AdbEngine.ROOT -> {
                         Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
@@ -239,13 +239,24 @@ class AdbTerminalManager(
         }
     }
 
+    private fun spawnShizukuProcess(cmdArray: Array<String>): Process {
+        val method = Shizuku::class.java.getDeclaredMethod(
+            "newProcess",
+            Array<String>::class.java,
+            Array<String>::class.java,
+            String::class.java
+        )
+        method.isAccessible = true
+        return method.invoke(null, cmdArray, null, null) as Process
+    }
+
     /**
      * Executes elevated command silently and returns output or success boolean.
      */
     suspend fun executeSilent(cmd: String): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
-            val process = when (_state.value.engine) {
-                AdbEngine.SHIZUKU -> Shizuku.newProcess(arrayOf("sh", "-c", cmd), null, null)
+            val process: Process = when (_state.value.engine) {
+                AdbEngine.SHIZUKU -> spawnShizukuProcess(arrayOf("sh", "-c", cmd))
                 AdbEngine.ROOT -> Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
                 else -> Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
             }

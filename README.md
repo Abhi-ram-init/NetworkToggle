@@ -19,16 +19,27 @@ An Android application built with **Jetpack Compose**, **Material 3**, and hardw
 - **Modem Verification**: Never falsely claims a switch occurred until verified by hardware.
 - **Clean Inline Failure Indicator**: If a carrier or hardware restriction prevents switching, a subtle inline badge flags `🔴 Not Switched • Hardware is on 4G LTE` with direct 1-tap access to the Force Menu—**zero annoying pop-ups or modal dialogues**.
 
-### 🎨 3. Minimal, Highly Interactive UI
-- **Clean OLED Design**: Deep pitch-dark layout (`#090D16`) with high-contrast typography, zero clutter, and distraction-free telemetry.
-- **Tactile Hero Toggle**: Large interactive toggle with spring-physics press feedback, fluid color transitions between 5G Emerald (`#10B981`) and 4G Cyan (`#06B6D4`), and real-time state feedback.
-- **Fluid 3-Way Mode Selector**: Segmented pill selector (`5G NR`, `Auto`, `4G LTE`) with instantaneous visual indication.
+### 🎨 3. Minimal, Refocused OLED UI
+- **Zero-Clutter Layout**: Rebuilt from the ground up with clean typography, high-contrast OLED dark background (`#080C14`), and minimal purposeful buttons.
+- **Clear Instructions**: Step-by-step guidance provided in-context across every screen so you always know how switching works.
+- **Tactile Hero Switcher**: Instant status feedback and 1-tap switching between 5G NR and 4G LTE.
+- **Fluid 3-Way Mode Selector**: Segmented pill selector (`5G NR`, `Auto`, `4G LTE`).
 
-### ⏺ 4. Custom Macro Recorder (User-Driven, Zero Hardcoded Presets)
-- **Record Any Network Sequence**: Record custom sequences of network operations directly through the in-app recorder.
-- **Live Action Capture**: Actions performed in the app (switching to 5G, switching to 4G, adding delays, cycling mobile data, or launching RadioInfo) are captured in order into the macro.
-- **Macro Management**: Save named macros, play them back with step-by-step progress indication, or delete them anytime.
-- **Collapsible Terminal Trace**: Monospace diagnostic logs tucked away cleanly in a collapsible bottom sheet with Copy and Clear controls.
+### 🪄 4. Streamlined Network Macro Engine
+- **Dual-Engine Execution**:
+  - **Direct Shell Engine**: Executes instant background frequency switching via elevated shell in 50ms with zero screen taps.
+  - **Guided Accessibility Engine**: Resilient single-tap navigation with OEM-adaptive text lookups and safe gesture execution.
+- **Live Progress & Execution Trace**: Real-time progress bar and monospace diagnostics trace.
+
+### 💻 5. Integrated On-Device ADB Terminal (No PC Needed!)
+- **Run Shell Directly on Phone**: Execute ADB shell commands on the phone itself without needing a computer or USB cable.
+- **In-App Permission Authorization**: 1-tap grant request via Shizuku (Wireless Debugging) or Kernel Root.
+- **Interactive Monospace Console**: Live output streaming, custom command input, and auto-scrolling log.
+- **1-Tap Quick Actions**:
+  - `Grant Secure Settings` (`pm grant ... android.permission.WRITE_SECURE_SETTINGS`)
+  - `Force 5G NR` (`cmd phone set-preferred-network-type 0 26`)
+  - `Force 4G LTE` (`cmd phone set-preferred-network-type 0 10`)
+  - `Clear Console`
 
 ### 🎛️ 5. Control Panel / Quick Settings Integration
 - **Quick Settings Tile 1 (Network Mode Toggle)**: 1-tap 5G/4G mode switcher directly in your pull-down notification / Control Panel shade.
