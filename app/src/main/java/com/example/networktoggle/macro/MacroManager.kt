@@ -444,9 +444,9 @@ class MacroManager(
             ),
             // Step 7: Click the specific carrier SIM (e.g. Jio)
             MacroStep(
-                actionType = MacroActionType.CLICK_TEXT,
+                actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
                 label = "4. Select $simName SIM",
-                shellCommand = simName
+                shellCommand = "$simName,SIM 1,SIM1,Primary SIM,Mobile data SIM,SIM"
             ),
             // Step 8: Wait for SIM settings screen
             MacroStep(
@@ -481,14 +481,14 @@ class MacroManager(
                 label = "Wait for mode picker",
                 delaySeconds = 2
             ),
-            // Step 13: Select the target mode (e.g. "LTE only", "4G only", "LTE/WCDMA")
+            // Step 13: Select the target mode (e.g. "Prefer LTE", "LTE", "4G", "LTE/3G/2G")
             MacroStep(
                 actionType = MacroActionType.FIND_AND_CLICK_ANY_OF,
                 label = "8. Select $targetModeName Mode",
                 shellCommand = when (targetModeName.uppercase()) {
-                    "4G" -> "LTE only,4G only,4G LTE,LTE/WCDMA/GSM,LTE,4G"
-                    "5G" -> "NR/LTE,5G/4G,5G NR,NR only,5G"
-                    "AUTO" -> "5G/4G/3G/2G,LTE/WCDMA/GSM,Auto,Automatic"
+                    "4G" -> "Prefer LTE,LTE/3G/2G,4G/3G/2G,LTE only,4G only,LTE,4G,4G LTE,LTE/WCDMA/GSM,LTE/WCDMA"
+                    "5G" -> "5G (recommended),Prefer 5G,5G/LTE/3G/2G,5G/4G/3G/2G,NR/LTE,5G NR,NR only,5G"
+                    "AUTO" -> "5G/4G/3G/2G,5G/LTE/3G/2G,5G (recommended),Auto,Automatic"
                     else -> targetModeName
                 }
             ),
@@ -588,39 +588,34 @@ class MacroManager(
                         }
                         context.startActivity(intent)
                     }
-                    // Wait for Settings package to appear (event-driven)
-                    val service = MacroAccessibilityService.instance
-                    if (service != null) {
-                        service.waitForWindowPackage("com.android.settings", 4000L)
-                    } else {
-                        delay(1500)
-                    }
+                    delay(1200)
                 }
                 MacroActionType.OPEN_NETWORK_SETTINGS -> {
-                    // Use ACTION_SETTINGS (main settings screen) for reliable cross-OEM behaviour.
-                    // ACTION_WIRELESS_SETTINGS opens Wi-Fi screen on stock Android, not Network & Internet.
+                    // Try direct mobile settings intent first, fallback to general settings
                     withContext(Dispatchers.Main) {
-                        val intent = Intent(Settings.ACTION_SETTINGS).apply {
+                        val directIntent = Intent("android.settings.NETWORK_OPERATOR_SETTINGS").apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK
                         }
-                        context.startActivity(intent)
+                        try {
+                            context.startActivity(directIntent)
+                        } catch (_: Exception) {
+                            val generalIntent = Intent(Settings.ACTION_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            context.startActivity(generalIntent)
+                        }
                     }
-                    val service = MacroAccessibilityService.instance
-                    if (service != null) {
-                        service.waitForWindowPackage("com.android.settings", 4000L)
-                    } else {
-                        delay(1500)
-                    }
+                    delay(1200)
                 }
                 MacroActionType.CLICK_TEXT -> {
                     val textToClick = step.shellCommand.ifBlank { "SIM" }
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        // Use suspend retry with scroll-fallback
+                        // Use suspend retry with multi-window lookup and scroll-fallback
                         val clicked = service.findAndClickTextSuspend(
                             text = textToClick,
                             maxAttempts = 4,
-                            retryDelayMs = 700L
+                            retryDelayMs = 600L
                         )
                         if (clicked) {
                             addLog(LogLevel.SUCCESS, "✔ Tapped text node '$textToClick'")
@@ -642,8 +637,8 @@ class MacroManager(
                     if (service != null && candidates.isNotEmpty()) {
                         val clicked = service.findAndClickAnyOf(
                             candidates = candidates,
-                            maxScrollAttempts = 3,
-                            retryDelayMs = 600L
+                            maxScrollAttempts = 4,
+                            retryDelayMs = 500L
                         )
                         if (clicked) {
                             addLog(LogLevel.SUCCESS, "✔ OEM-adaptive click succeeded")
@@ -658,22 +653,22 @@ class MacroManager(
                 MacroActionType.SCROLL_DOWN -> {
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        service.scrollDown()
+                        service.scrollDownSuspend()
                         addLog(LogLevel.SUCCESS, "✔ Scrolled down on screen")
                     } else {
                         addLog(LogLevel.WARN, "⚠ Accessibility service not enabled.")
                     }
-                    delay(500)
+                    delay(300)
                 }
                 MacroActionType.SCROLL_UP -> {
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        service.scrollUp()
+                        service.scrollUpSuspend()
                         addLog(LogLevel.SUCCESS, "✔ Scrolled up on screen")
                     } else {
                         addLog(LogLevel.WARN, "⚠ Accessibility service not enabled.")
                     }
-                    delay(500)
+                    delay(300)
                 }
                 MacroActionType.READ_SIM_SETTINGS -> {
                     val service = MacroAccessibilityService.instance
@@ -722,8 +717,8 @@ class MacroManager(
                     addLog(LogLevel.EXEC, "👆 Simulating screen tap at (${x.toInt()}, ${y.toInt()})...")
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        service.clickAt(x, y)
-                        delay(400)
+                        service.clickAtSuspend(x, y)
+                        delay(300)
                     } else {
                         addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Tap skipped.")
                     }
@@ -737,8 +732,8 @@ class MacroManager(
                     addLog(LogLevel.EXEC, "👉 Simulating swipe (${startX.toInt()}, ${startY.toInt()}) → (${endX.toInt()}, ${endY.toInt()})...")
                     val service = MacroAccessibilityService.instance
                     if (service != null) {
-                        service.swipe(startX, startY, endX, endY)
-                        delay(600)
+                        service.swipeSuspend(startX, startY, endX, endY)
+                        delay(400)
                     } else {
                         addLog(LogLevel.WARN, "⚠ Accessibility service not enabled. Swipe skipped.")
                     }
