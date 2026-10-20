@@ -209,7 +209,8 @@ sealed class MacroExecutionState {
 
 class MacroManager(
     private val context: Context,
-    private val networkModeManager: NetworkModeManager
+    private val networkModeManager: NetworkModeManager,
+    var adbTerminalManager: com.example.networktoggle.terminal.AdbTerminalManager? = null
 ) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("user_recorded_macros", Context.MODE_PRIVATE)
@@ -261,10 +262,29 @@ class MacroManager(
         val dataStr = prefs.getString("saved_macros_data", null)
         if (!dataStr.isNullOrBlank()) {
             val list = dataStr.split("###").mapNotNull { RecordedMacro.fromSerialized(it) }
-            _savedMacros.value = list
-            return
+            if (list.isNotEmpty()) {
+                _savedMacros.value = list
+                return
+            }
         }
-        _savedMacros.value = emptyList()
+        val default5G = RecordedMacro(
+            name = "Switch to 5G NR",
+            steps = listOf(
+                MacroStep(actionType = MacroActionType.SET_5G, label = "Enforce 5G NR Mode"),
+                MacroStep(actionType = MacroActionType.WAIT_DELAY, label = "Wait for modem sync", delaySeconds = 1),
+                MacroStep(actionType = MacroActionType.READ_SIM_SETTINGS, label = "Verify Active State")
+            )
+        )
+        val default4G = RecordedMacro(
+            name = "Switch to 4G LTE",
+            steps = listOf(
+                MacroStep(actionType = MacroActionType.SET_4G, label = "Enforce 4G LTE Mode"),
+                MacroStep(actionType = MacroActionType.WAIT_DELAY, label = "Wait for modem sync", delaySeconds = 1),
+                MacroStep(actionType = MacroActionType.READ_SIM_SETTINGS, label = "Verify Active State")
+            )
+        )
+        _savedMacros.value = listOf(default5G, default4G)
+        persistSavedMacros()
     }
 
     private fun persistSavedMacros() {

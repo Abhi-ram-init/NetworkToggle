@@ -67,6 +67,8 @@ class NetworkModeManager(private val context: Context) {
     private var telephonyCallback: Any? = null
     private var phoneStateListener: PhoneStateListener? = null
 
+    var adbTerminalManager: com.example.networktoggle.terminal.AdbTerminalManager? = null
+
     init {
         registerNetworkListener()
     }
@@ -178,10 +180,16 @@ class NetworkModeManager(private val context: Context) {
     }
 
     fun isDirectSwitchAvailable(): Boolean {
-        return hasSecureSettingsPermission() || isKernelRootAvailable()
+        return hasSecureSettingsPermission() || isKernelRootAvailable() || (adbTerminalManager?.state?.value?.isAuthorized == true)
     }
 
     fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
+        // Strategy 0: On-device ADB Terminal / Shizuku
+        if (tryAdbTerminalSwitch(mode)) {
+            refreshNetworkState()
+            return ToggleResult.DirectSuccess(mode, "Switched automatically via On-Device ADB Terminal")
+        }
+
         // Strategy 1: Root command if user's device has Kernel root (KernelSU / Magisk / APatch)
         if (tryRootSwitch(mode)) {
             refreshNetworkState()
@@ -203,6 +211,17 @@ class NetworkModeManager(private val context: Context) {
 
         // Strategy 4: Standard secure Android sandbox requires user authorization
         return ToggleResult.RequiresAction(mode)
+    }
+
+    private fun tryAdbTerminalSwitch(mode: NetworkMode): Boolean {
+        val terminal = adbTerminalManager ?: return false
+        if (!terminal.state.value.isAuthorized) return false
+        return try {
+            terminal.setNetworkModeViaAdb(mode)
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun toggleNetworkMode(): ToggleResult {

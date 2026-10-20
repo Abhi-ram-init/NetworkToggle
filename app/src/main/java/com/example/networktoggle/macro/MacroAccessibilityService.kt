@@ -37,8 +37,6 @@ import kotlin.coroutines.resume
  */
 class MacroAccessibilityService : AccessibilityService() {
 
-    private val eventChannel = Channel<AccessibilityEvent>(capacity = Channel.UNLIMITED)
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -54,8 +52,6 @@ class MacroAccessibilityService : AccessibilityService() {
                 _lastClickedText.value = text
             }
         }
-
-        eventChannel.trySend(event)
     }
 
     override fun onInterrupt() {
@@ -68,7 +64,6 @@ class MacroAccessibilityService : AccessibilityService() {
             instance = null
             _isServiceActive.value = false
         }
-        eventChannel.close()
     }
 
     // ------------------------------------------------------------------
@@ -252,14 +247,17 @@ class MacroAccessibilityService : AccessibilityService() {
 
                 // Check clickable ancestor
                 var target: AccessibilityNodeInfo? = node
+                var clickPerformed = false
                 while (target != null) {
                     if (target.isClickable) {
-                        target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        clickPerformed = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        if (clickPerformed) break
                     }
                     target = target.parent
                 }
+                if (clickPerformed) return true
 
-                // If visible on screen, also dispatch coordinate tap
+                // If not clickable via action, simulate coordinate tap if visible
                 if (bounds.width() > 0 && bounds.height() > 0 && bounds.centerY() in 10..(sh.toInt() - 10)) {
                     clickAt(bounds.centerX().toFloat(), bounds.centerY().toFloat(), 70L)
                     return true
@@ -294,20 +292,21 @@ class MacroAccessibilityService : AccessibilityService() {
                     var target: AccessibilityNodeInfo? = node
                     while (target != null) {
                         if (target.isClickable) {
-                            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                                clickTriggered = true
-                                break
-                            }
+                            clickTriggered = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                            if (clickTriggered) break
                         }
                         target = target.parent
                     }
 
-                    // 2. Also dispatch physical touch tap at center coordinates
-                    val tapSuccess = clickAtSuspend(bounds.centerX().toFloat(), bounds.centerY().toFloat(), 80L)
+                    if (clickTriggered) {
+                        delay(250)
+                        return true
+                    }
 
-                    // Short settling delay
-                    delay(300)
-                    return clickTriggered || tapSuccess
+                    // 2. Only if ACTION_CLICK failed or wasn't clickable, dispatch physical touch tap
+                    val tapSuccess = clickAtSuspend(bounds.centerX().toFloat(), bounds.centerY().toFloat(), 80L)
+                    delay(250)
+                    return tapSuccess
                 }
             }
         }

@@ -19,6 +19,8 @@ import com.example.networktoggle.network.DetectedNetwork
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.network.NetworkModeManager
 import com.example.networktoggle.network.ToggleResult
+import com.example.networktoggle.terminal.AdbTerminalManager
+import com.example.networktoggle.terminal.AdbTerminalState
 import com.example.networktoggle.tile.NetworkMacroTileService
 import com.example.networktoggle.tile.NetworkToggleTileService
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +45,6 @@ data class MainScreenUiState(
     val hasPermission: Boolean = false,
     val selectedChoice: NetworkMode = NetworkMode.FIVE_G,
     val switchStatus: SwitchStatus = SwitchStatus.Idle,
-    val uiStyle: com.example.networktoggle.network.AppUiStyle = com.example.networktoggle.network.AppUiStyle.MINIMAL_CLEAN,
     val isDirectToggleGranted: Boolean = false,
     val isKernelRootDetected: Boolean = false,
     val adbGrantCommand: String = "",
@@ -54,6 +55,7 @@ data class MainScreenUiState(
     val macroState: MacroExecutionState = MacroExecutionState.Idle,
     val macroLogs: List<MacroLogEntry> = emptyList(),
     val inspectedProcess: ProcessTelephonyInfo? = null,
+    val terminalState: AdbTerminalState = AdbTerminalState(),
 ) {
     val currentConnectedMode: NetworkMode
         get() = if (liveNetwork.is5G) NetworkMode.FIVE_G else NetworkMode.FOUR_G
@@ -62,6 +64,7 @@ data class MainScreenUiState(
 class MainScreenViewModel(
     private val networkModeManager: NetworkModeManager,
     private val macroManager: MacroManager? = null,
+    val adbTerminalManager: AdbTerminalManager? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -69,12 +72,12 @@ class MainScreenViewModel(
             liveNetwork = networkModeManager.detectCurrentNetwork(),
             hasPermission = networkModeManager.hasPermission(),
             selectedChoice = networkModeManager.getSavedMode(),
-            uiStyle = networkModeManager.getSavedUiStyle(),
             isDirectToggleGranted = networkModeManager.hasSecureSettingsPermission(),
             isKernelRootDetected = networkModeManager.isKernelRootAvailable(),
             adbGrantCommand = networkModeManager.getAdbCommand(),
             savedMacros = macroManager?.savedMacros?.value ?: emptyList(),
-            inspectedProcess = macroManager?.lastInspectedProcess?.value
+            inspectedProcess = macroManager?.lastInspectedProcess?.value,
+            terminalState = adbTerminalManager?.state?.value ?: AdbTerminalState()
         )
     )
     val uiState: StateFlow<MainScreenUiState> = _uiState.asStateFlow()
@@ -82,6 +85,12 @@ class MainScreenViewModel(
     private var verificationJob: Job? = null
 
     init {
+        // Link ADB terminal manager to network and macro managers
+        if (adbTerminalManager != null) {
+            networkModeManager.adbTerminalManager = adbTerminalManager
+            macroManager?.adbTerminalManager = adbTerminalManager
+        }
+
         // 1. Observe live modem network changes
         viewModelScope.launch {
             networkModeManager.liveNetwork.collect { liveNet ->
@@ -110,44 +119,7 @@ class MainScreenViewModel(
             }
         }
 
-        // 2. Real-time permission observer: runs network toggle commands instant permission is granted
-        viewModelScope.launch(Dispatchers.IO) {
-            if (networkModeManager.isKernelRootAvailable() && !networkModeManager.hasSecureSettingsPermission()) {
-                val autoGranted = networkModeManager.requestKernelPermission(_uiState.value.selectedChoice)
-                if (autoGranted) {
-                    val target = _uiState.value.selectedChoice
-                    _uiState.update {
-                        it.copy(
-                            isDirectToggleGranted = true,
-                            isKernelRootDetected = true,
-                            switchStatus = SwitchStatus.Switching(target, 10)
-                        )
-                    }
-                    startVerification(target)
-                }
-            }
-
-            while (true) {
-                delay(1200)
-                val wasGranted = _uiState.value.isDirectToggleGranted
-                val isNowGranted = networkModeManager.hasSecureSettingsPermission()
-                if (!wasGranted && isNowGranted) {
-                    val root = networkModeManager.isKernelRootAvailable()
-                    val target = _uiState.value.selectedChoice
-                    _uiState.update {
-                        it.copy(
-                            isDirectToggleGranted = true,
-                            isKernelRootDetected = root,
-                            switchStatus = SwitchStatus.Switching(target, 10)
-                        )
-                    }
-                    networkModeManager.tryDirectSwitch(target)
-                    startVerification(target)
-                }
-            }
-        }
-
-        // 3. Observe Macro Manager streams
+        // 2. Observe Macro Manager streams
         macroManager?.let { mm ->
             viewModelScope.launch {
                 mm.savedMacros.collect { macros ->
@@ -180,86 +152,45 @@ class MainScreenViewModel(
                 }
             }
         }
+
+        // 3. Observe ADB Terminal Manager state
+        adbTerminalManager?.let { atm ->
+            viewModelScope.launch {
+                atm.state.collect { termState ->
+                    _uiState.update {
+                        it.copy(
+                            terminalState = termState,
+                            isDirectToggleGranted = networkModeManager.hasSecureSettingsPermission() || termState.isAuthorized,
+                            isKernelRootDetected = termState.isRootAvailable
+                        )
+                    }
+                }
+            }
+        }
+
+        // 4. Background permission poller
+        viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                delay(2000)
+                val wasGranted = _uiState.value.isDirectToggleGranted
+                val isNowGranted = networkModeManager.hasSecureSettingsPermission() ||
+                        (adbTerminalManager?.state?.value?.isAuthorized == true)
+                if (!wasGranted && isNowGranted) {
+                    _uiState.update {
+                        it.copy(
+                            isDirectToggleGranted = true,
+                            isKernelRootDetected = networkModeManager.isKernelRootAvailable()
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun onAppResumed() {
         refreshPermission()
-        refreshDirectPermissions()
-        val currentStatus = _uiState.value.switchStatus
-        if (currentStatus is SwitchStatus.Switching) {
-            viewModelScope.launch {
-                delay(1000)
-                val live = networkModeManager.detectCurrentNetwork()
-                val target = currentStatus.targetMode
-                val matched = when (target) {
-                    NetworkMode.FIVE_G -> live.is5G
-                    NetworkMode.FOUR_G -> live.is4G
-                    NetworkMode.AUTO -> live.is5G || live.is4G
-                }
-                verificationJob?.cancel()
-                if (matched) {
-                    networkModeManager.saveMode(target)
-                    _uiState.update {
-                        it.copy(
-                            liveNetwork = live,
-                            switchStatus = SwitchStatus.Success(target)
-                        )
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            liveNetwork = live,
-                            switchStatus = SwitchStatus.Failed(target, live.displayName)
-                        )
-                    }
-                }
-            }
-        } else {
-            networkModeManager.refreshNetworkState()
-        }
-    }
-
-    fun refreshDirectPermissions() {
-        val wasGranted = _uiState.value.isDirectToggleGranted
-        val granted = networkModeManager.hasSecureSettingsPermission()
-        val isRoot = networkModeManager.isKernelRootAvailable()
-        _uiState.update {
-            it.copy(
-                isDirectToggleGranted = granted,
-                isKernelRootDetected = isRoot,
-                adbGrantCommand = networkModeManager.getAdbCommand()
-            )
-        }
-        if (!wasGranted && granted) {
-            val target = _uiState.value.selectedChoice
-            _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(target, 10)) }
-            networkModeManager.tryDirectSwitch(target)
-            startVerification(target)
-        }
-    }
-
-    fun requestKernelRootGrant(onResult: (Boolean) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val targetMode = _uiState.value.selectedChoice
-            _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(targetMode, 10)) }
-
-            val granted = networkModeManager.requestKernelPermission(targetMode)
-            val root = networkModeManager.isKernelRootAvailable()
-            _uiState.update {
-                it.copy(
-                    isDirectToggleGranted = granted,
-                    isKernelRootDetected = root
-                )
-            }
-            if (granted) {
-                startVerification(targetMode)
-            } else {
-                _uiState.update { it.copy(switchStatus = SwitchStatus.Idle) }
-            }
-            withContext(Dispatchers.Main) {
-                onResult(granted)
-            }
-        }
+        adbTerminalManager?.refreshState()
+        networkModeManager.refreshNetworkState()
     }
 
     fun refreshPermission() {
@@ -277,11 +208,6 @@ class MainScreenViewModel(
 
     fun selectChoice(mode: NetworkMode) {
         _uiState.update { it.copy(selectedChoice = mode, switchStatus = SwitchStatus.Idle) }
-    }
-
-    fun setUiStyle(style: com.example.networktoggle.network.AppUiStyle) {
-        networkModeManager.saveUiStyle(style)
-        _uiState.update { it.copy(uiStyle = style) }
     }
 
     fun applySelectedSwitch(context: Context? = null) {
@@ -302,19 +228,9 @@ class MainScreenViewModel(
     }
 
     private fun executeSwitch(targetMode: NetworkMode, context: Context?) {
-        // If recording a macro, automatically capture this action!
-        if (macroManager?.isRecording == true) {
-            val action = when (targetMode) {
-                NetworkMode.FIVE_G -> MacroActionType.SET_5G
-                NetworkMode.FOUR_G -> MacroActionType.SET_4G
-                NetworkMode.AUTO -> MacroActionType.SET_AUTO
-            }
-            macroManager.recordAction(action)
-        }
-
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update {
-                it.copy(switchStatus = SwitchStatus.Switching(targetMode, 10))
+                it.copy(switchStatus = SwitchStatus.Switching(targetMode, 8))
             }
 
             val directResult = networkModeManager.tryDirectSwitch(targetMode)
@@ -334,7 +250,7 @@ class MainScreenViewModel(
     private fun startVerification(targetMode: NetworkMode) {
         verificationJob?.cancel()
         verificationJob = viewModelScope.launch {
-            for (i in 10 downTo 1) {
+            for (i in 8 downTo 1) {
                 delay(1000)
                 val live = networkModeManager.detectCurrentNetwork()
                 val matched = when (targetMode) {
@@ -389,9 +305,6 @@ class MainScreenViewModel(
     }
 
     fun openRadioInfo(context: Context) {
-        if (macroManager?.isRecording == true) {
-            macroManager.recordAction(MacroActionType.LAUNCH_RADIO_INFO)
-        }
         networkModeManager.openRadioInfo(context)
     }
 
@@ -404,36 +317,8 @@ class MainScreenViewModel(
     }
 
     // -------------------------------------------------------------
-    // USER-DRIVEN MACRO RECORDING & EXECUTION
+    // MACRO AUTOMATIONS
     // -------------------------------------------------------------
-
-    fun startRecordingMacro(name: String = "") {
-        macroManager?.startRecording(name)
-    }
-
-    fun recordMacroAction(actionType: MacroActionType, delaySec: Int = 1, shellCmd: String = "") {
-        macroManager?.recordAction(actionType, delaySec, shellCmd)
-    }
-
-    fun finishRecordingMacro(name: String? = null) {
-        macroManager?.finishRecording(name)
-    }
-
-    fun cancelRecordingMacro() {
-        macroManager?.cancelRecording()
-    }
-
-    fun deleteMacro(macroId: String) {
-        macroManager?.deleteMacro(macroId)
-    }
-
-    fun buildAndSaveGuidedSimToggleMacro(carrierName: String = "Jio", targetModeName: String = "4G"): RecordedMacro? {
-        return macroManager?.buildAndSaveGuidedSimToggleMacro(carrierName, targetModeName)
-    }
-
-    fun createCustomBlockMacro(name: String, steps: List<MacroStep>): RecordedMacro? {
-        return macroManager?.createCustomBlockMacro(name, steps)
-    }
 
     fun runMacro(
         macro: RecordedMacro,
@@ -449,17 +334,48 @@ class MainScreenViewModel(
         }
     }
 
+    fun runModeMacro(targetMode: NetworkMode) {
+        val macro = _uiState.value.savedMacros.firstOrNull {
+            if (targetMode == NetworkMode.FIVE_G) it.name.contains("5G", ignoreCase = true)
+            else it.name.contains("4G", ignoreCase = true)
+        } ?: RecordedMacro(
+            name = "Switch to ${targetMode.label()}",
+            steps = listOf(
+                MacroStep(
+                    actionType = if (targetMode == NetworkMode.FIVE_G) MacroActionType.SET_5G else MacroActionType.SET_4G,
+                    label = "Enforce ${targetMode.label()}"
+                )
+            )
+        )
+        runMacro(macro)
+    }
+
     fun clearMacroLogs() {
         macroManager?.clearLogs()
     }
 
-    fun getFormattedMacroLogs(): String {
-        return macroManager?.getFormattedLogs() ?: ""
+    // -------------------------------------------------------------
+    // ON-DEVICE ADB TERMINAL
+    // -------------------------------------------------------------
+
+    fun requestAdbPermission() {
+        adbTerminalManager?.requestPermission()
     }
 
-    fun inspectProcess() {
-        val info = macroManager?.inspectProcessAndTelephony()
-        _uiState.update { it.copy(inspectedProcess = info) }
+    fun executeAdbCommand(cmd: String) {
+        adbTerminalManager?.executeCommand(cmd)
+    }
+
+    fun grantAdbSecureSettings() {
+        adbTerminalManager?.grantWriteSecureSettings()
+    }
+
+    fun clearAdbLogs() {
+        adbTerminalManager?.clearLogs()
+    }
+
+    fun setNetworkModeViaAdb(mode: NetworkMode) {
+        adbTerminalManager?.setNetworkModeViaAdb(mode)
     }
 
     fun requestAddTileToControlPanel(
@@ -497,7 +413,7 @@ class MainScreenViewModel(
                 onResult(msg)
             } ?: onResult("⚠️ Control Panel manager not available.")
         } else {
-            onResult("💡 Android 12 and below: Swipe down Control Panel twice, tap Edit (✏️), and drag the tile into your active shade.")
+            onResult("💡 Android 12 and below: Swipe down notification shade twice, tap Edit (✏️), and drag the tile into your active shade.")
         }
     }
 }
