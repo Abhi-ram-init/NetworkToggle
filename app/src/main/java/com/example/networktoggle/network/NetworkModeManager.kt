@@ -25,7 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.DataOutputStream
 
 data class DetectedNetwork(
-    val displayName: String = "Detecting…",
+    val displayName: String = "DetectingÃ¢â‚¬Â¦",
     val is5G: Boolean = false,
     val is4G: Boolean = false,
     val isCellular: Boolean = true,
@@ -180,10 +180,20 @@ class NetworkModeManager(private val context: Context) {
     }
 
     fun isDirectSwitchAvailable(): Boolean {
-        return hasSecureSettingsPermission() || isKernelRootAvailable() || (adbTerminalManager?.state?.value?.isAuthorized == true)
+        return com.example.networktoggle.bridge.PrivilegedBridgeManager.isConnected || hasSecureSettingsPermission() || isKernelRootAvailable() || (adbTerminalManager?.state?.value?.isAuthorized == true)
     }
 
     fun tryDirectSwitch(mode: NetworkMode): ToggleResult {
+        // Strategy -1: Privileged Backend Service (Local Binder IPC via native app_process)
+        if (com.example.networktoggle.bridge.PrivilegedBridgeManager.isConnected) {
+            val success = com.example.networktoggle.bridge.PrivilegedBridgeManager.setNetworkModeSync(mode)
+            if (success) {
+                refreshNetworkState()
+                val uid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedUid
+                val idStr = if (uid == 0) "Root UID 0" else "ADB Shell UID $uid"
+                return ToggleResult.DirectSuccess(mode, "Switched automatically via Privileged Backend Service ($idStr)")
+            }
+        }
         // Strategy 0: On-device ADB Terminal / Shizuku
         if (tryAdbTerminalSwitch(mode)) {
             refreshNetworkState()
@@ -323,7 +333,7 @@ class NetworkModeManager(private val context: Context) {
      * that allows users to pick "NR only", "NR/LTE", or "LTE only" directly.
      */
     fun openRadioInfo(ctx: Context = context): Boolean {
-        Toast.makeText(ctx, "💡 Scroll down to: Set Preferred Network Type", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, "Ã°Å¸â€™Â¡ Scroll down to: Set Preferred Network Type", Toast.LENGTH_SHORT).show()
         triggerRootSwipeIfApplicable()
         val intents = listOf(
             Intent("android.intent.action.MAIN").setClassName(
@@ -356,7 +366,7 @@ class NetworkModeManager(private val context: Context) {
      * Opens the device's Mobile Network Settings page directly.
      */
     fun openMobileNetworkSettings(ctx: Context = context): Boolean {
-        Toast.makeText(ctx, "💡 Preferred network type highlighted below", Toast.LENGTH_SHORT).show()
+        Toast.makeText(ctx, "Ã°Å¸â€™Â¡ Preferred network type highlighted below", Toast.LENGTH_SHORT).show()
         triggerRootSwipeIfApplicable()
 
         val fragmentArgs = Bundle().apply {
@@ -472,7 +482,7 @@ class NetworkModeManager(private val context: Context) {
                     } else if (hasWifi) {
                         DetectedNetwork("Wi-Fi Connected", is5G = false, is4G = false, isCellular = false, "Mobile standby")
                     } else {
-                        DetectedNetwork("Searching Network…", is5G = false, is4G = false, isCellular = false, "No signal")
+                        DetectedNetwork("Searching NetworkÃ¢â‚¬Â¦", is5G = false, is4G = false, isCellular = false, "No signal")
                     }
                 }
             }
@@ -566,9 +576,9 @@ enum class AppUiStyle {
     }
 
     fun icon(): String = when (this) {
-        CYBER_NEON -> "⚡"
-        MINIMAL_CLEAN -> "🎨"
-        SPEEDOMETER -> "🏎️"
+        CYBER_NEON -> "Ã¢Å¡Â¡"
+        MINIMAL_CLEAN -> "Ã°Å¸Å½Â¨"
+        SPEEDOMETER -> "Ã°Å¸ÂÅ½Ã¯Â¸Â"
     }
 }
 

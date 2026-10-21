@@ -57,6 +57,7 @@ data class MainScreenUiState(
     val inspectedProcess: ProcessTelephonyInfo? = null,
     val terminalState: AdbTerminalState = AdbTerminalState(),
     val popupMessage: String? = null,
+    val bridgeState: com.example.networktoggle.bridge.BridgeConnectionState = com.example.networktoggle.bridge.BridgeConnectionState.Disconnected,
 ) {
     val currentConnectedMode: NetworkMode
         get() = if (liveNetwork.is5G) NetworkMode.FIVE_G else NetworkMode.FOUR_G
@@ -155,6 +156,11 @@ class MainScreenViewModel(
         }
 
         // 3. Observe ADB Terminal Manager state
+        viewModelScope.launch {
+            com.example.networktoggle.bridge.PrivilegedBridgeManager.state.collect { bState ->
+                _uiState.update { it.copy(bridgeState = bState) }
+            }
+        }
         adbTerminalManager?.let { atm ->
             viewModelScope.launch {
                 atm.state.collect { termState ->
@@ -287,7 +293,7 @@ class MainScreenViewModel(
                     it.copy(
                         liveNetwork = finalLive,
                         switchStatus = SwitchStatus.Failed(targetMode, finalLive.displayName),
-                        popupMessage = "⚠️ Network toggle could not switch to ${targetMode.label()}. Modem remained on ${finalLive.displayName}. Tap Force Menu (*#*#4636#*#*) if needed."
+                        popupMessage = "âš ï¸ Network toggle could not switch to ${targetMode.label()}. Modem remained on ${finalLive.displayName}. Tap Force Menu (*#*#4636#*#*) if needed."
                     )
                 }
             } else {
@@ -304,6 +310,58 @@ class MainScreenViewModel(
 
     fun showPopupMessage(msg: String) {
         _uiState.update { it.copy(popupMessage = msg) }
+    }
+
+    fun startPrivilegedBridgeViaRoot(context: Context) {
+        viewModelScope.launch {
+            val started = com.example.networktoggle.bridge.PrivilegedBridgeManager.startViaRoot(context)
+            if (started) {
+                showPopupMessage("⚡ Launched Privileged Backend Service via Root!")
+            } else {
+                showPopupMessage("⚠️ Failed to start via Root. Verify SU availability.")
+            }
+        }
+    }
+
+    fun startPrivilegedBridgeViaAdb(context: Context) {
+        val terminal = adbTerminalManager
+        if (terminal != null) {
+            val dispatched = com.example.networktoggle.bridge.PrivilegedBridgeManager.startViaAdbTerminal(context, terminal)
+            if (dispatched) {
+                showPopupMessage("💻 Launch command dispatched to ADB Terminal.")
+            }
+        } else {
+            showPopupMessage("⚠️ ADB Terminal not ready.")
+        }
+    }
+
+    fun stopPrivilegedBridge() {
+        val stopped = com.example.networktoggle.bridge.PrivilegedBridgeManager.stopService()
+        if (stopped) {
+            showPopupMessage("🛑 Privileged Backend Service stopped.")
+        }
+    }
+
+    fun testPrivilegedBridgePing() {
+        viewModelScope.launch {
+            val ok = com.example.networktoggle.bridge.PrivilegedBridgeManager.ping()
+            if (ok) {
+                val uid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedUid
+                val pid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedPid
+                val idStr = if (uid == 0) "Root" else "ADB Shell ()"
+                showPopupMessage("✔ Bridge Ping OK! Connected to  (PID: 3776)")
+            } else {
+                showPopupMessage("⚠️ Privileged bridge is not connected.")
+            }
+        }
+    }
+
+    fun getPrivilegedBridgeLaunchCommand(context: Context): String {
+        return com.example.networktoggle.bridge.PrivilegedBridgeManager.getLaunchCommand(context)
+    }
+
+    fun getPrivilegedBridgeAdbPcCommand(context: Context): String {
+        return com.example.networktoggle.bridge.PrivilegedBridgeManager.getAdbPcCommand(context)
     }
 
     fun dismissPopupMessage() {
@@ -416,17 +474,17 @@ class MainScreenViewModel(
             ) { result ->
                 val msg = when (result) {
                     StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ->
-                        "✅ Added to Control Panel / Quick Settings!"
+                        "âœ… Added to Control Panel / Quick Settings!"
                     StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED ->
-                        "ℹ️ Tile is already in your Control Panel."
+                        "â„¹ï¸ Tile is already in your Control Panel."
                     StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED ->
-                        "⚠️ Request dismissed. You can add it anytime from Edit Tiles."
+                        "âš ï¸ Request dismissed. You can add it anytime from Edit Tiles."
                     else -> "Tile status updated."
                 }
                 onResult(msg)
-            } ?: onResult("⚠️ Control Panel manager not available.")
+            } ?: onResult("âš ï¸ Control Panel manager not available.")
         } else {
-            onResult("💡 Android 12 and below: Swipe down notification shade twice, tap Edit (✏️), and drag the tile into your active shade.")
+            onResult("ðŸ’¡ Android 12 and below: Swipe down notification shade twice, tap Edit (âœï¸), and drag the tile into your active shade.")
         }
     }
 }

@@ -121,7 +121,7 @@ class MainScreenViewModelTest {
         var state = MainScreenUiState()
         assertEquals(null, state.popupMessage)
 
-        val failMessage = "⚠️ Network toggle could not complete automatically. Staying in app."
+        val failMessage = "Ã¢Å¡Â Ã¯Â¸Â Network toggle could not complete automatically. Staying in app."
         state = state.copy(popupMessage = failMessage)
         assertEquals(failMessage, state.popupMessage)
 
@@ -139,5 +139,49 @@ class MainScreenViewModelTest {
         )
         assertEquals(false, completedFailed.success)
         assertTrue(completedFailed.summary.contains("warning"))
+    }
+
+    @Test
+    fun bridgeConnectionState_transitions_work() {
+        val disconnected = com.example.networktoggle.bridge.BridgeConnectionState.Disconnected
+        val shellConnected = com.example.networktoggle.bridge.BridgeConnectionState.Connected(
+            uid = 2000,
+            pid = 8842,
+            isRoot = false,
+            isShell = true
+        )
+        val rootConnected = com.example.networktoggle.bridge.BridgeConnectionState.Connected(
+            uid = 0,
+            pid = 9101,
+            isRoot = true,
+            isShell = false
+        )
+
+        assertEquals(2000, shellConnected.uid)
+        assertEquals(8842, shellConnected.pid)
+        assertTrue(shellConnected.isShell)
+        org.junit.Assert.assertFalse(shellConnected.isRoot)
+
+        assertEquals(0, rootConnected.uid)
+        assertEquals(9101, rootConnected.pid)
+        assertTrue(rootConnected.isRoot)
+        org.junit.Assert.assertFalse(rootConnected.isShell)
+    }
+
+    @Test
+    fun uiState_tracks_bridgeState() {
+        val state = MainScreenUiState()
+        assertEquals(com.example.networktoggle.bridge.BridgeConnectionState.Disconnected, state.bridgeState)
+
+        val updated = state.copy(
+            bridgeState = com.example.networktoggle.bridge.BridgeConnectionState.Connected(
+                uid = 2000,
+                pid = 1234,
+                isRoot = false,
+                isShell = true
+            )
+        )
+        assertTrue(updated.bridgeState is com.example.networktoggle.bridge.BridgeConnectionState.Connected)
+        assertEquals(2000, (updated.bridgeState as com.example.networktoggle.bridge.BridgeConnectionState.Connected).uid)
     }
 }

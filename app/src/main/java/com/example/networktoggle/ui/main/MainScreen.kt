@@ -64,10 +64,10 @@ import com.example.networktoggle.terminal.AdbEngine
 import com.example.networktoggle.terminal.TerminalLineType
 
 enum class NavigationTab(val title: String, val icon: String) {
-    SWITCHER("Toggle", "⚡"),
-    MACRO("Macro", "🪄"),
-    TERMINAL("ADB", "💻"),
-    SETTINGS("Settings", "⚙️")
+    SWITCHER("Toggle", "âš¡"),
+    MACRO("Macro", "ðŸª„"),
+    TERMINAL("ADB", "ðŸ’»"),
+    SETTINGS("Settings", "âš™ï¸")
 }
 
 @Composable
@@ -229,7 +229,11 @@ fun MainScreen(
                                     viewModel.requestAddTileToControlPanel(isMacro, context) { msg ->
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     }
-                                }
+                                },
+                                onStartBridgeViaAdb = { viewModel.startPrivilegedBridgeViaAdb(context) },
+                                onStartBridgeViaRoot = { viewModel.startPrivilegedBridgeViaRoot(context) },
+                                onStopBridge = viewModel::stopPrivilegedBridge,
+                                onTestBridgePing = viewModel::testPrivilegedBridgePing
                             )
                         }
                     }
@@ -257,7 +261,7 @@ fun MainScreen(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "⚠️", fontSize = 14.sp)
+                    Text(text = "âš ï¸", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = uiState.popupMessage ?: "",
@@ -408,7 +412,7 @@ private fun MinimalSegmentedNavBar(
 }
 
 // =====================================================================
-// SCREEN 1: ⚡ SWITCHER
+// SCREEN 1: âš¡ SWITCHER
 // =====================================================================
 @Composable
 private fun SwitcherScreen(
@@ -559,7 +563,7 @@ private fun SwitcherScreen(
                             CircularProgressIndicator(modifier = Modifier.size(13.dp), color = Color(0xFFF59E0B), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Applying ${s.targetMode.label()} switch (${s.remainingSeconds}s)…",
+                                text = "Applying ${s.targetMode.label()} switch (${s.remainingSeconds}s)â€¦",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFFF59E0B)
@@ -643,9 +647,9 @@ private fun SwitcherScreen(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             val modes = listOf(
-                Triple(NetworkMode.FIVE_G, "5G NR", "⚡"),
-                Triple(NetworkMode.AUTO, "Auto", "🔄"),
-                Triple(NetworkMode.FOUR_G, "4G LTE", "📶")
+                Triple(NetworkMode.FIVE_G, "5G NR", "âš¡"),
+                Triple(NetworkMode.AUTO, "Auto", "ðŸ”„"),
+                Triple(NetworkMode.FOUR_G, "4G LTE", "ðŸ“¶")
             )
             modes.forEach { (mode, label, icon) ->
                 val isSelected = uiState.selectedChoice == mode
@@ -686,7 +690,7 @@ private fun SwitcherScreen(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "💡 HOW TOGGLING WORKS ON ANDROID",
+                text = "ðŸ’¡ HOW TOGGLING WORKS ON ANDROID",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF38BDF8),
@@ -694,9 +698,9 @@ private fun SwitcherScreen(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "• 1-Click Background Toggle: Works automatically if elevated permission is granted via Shizuku, ADB, or Root.\n" +
-                        "• Universal Force Menu: Tap 'Force Menu' below to set 'NR only' or 'LTE only' directly in Android's hardware radio menu.\n" +
-                        "• On-Device Terminal: Switch to the ADB Terminal tab above to grant permission directly on your phone without a PC.",
+                text = "â€¢ 1-Click Background Toggle: Works automatically if elevated permission is granted via Shizuku, ADB, or Root.\n" +
+                        "â€¢ Universal Force Menu: Tap 'Force Menu' below to set 'NR only' or 'LTE only' directly in Android's hardware radio menu.\n" +
+                        "â€¢ On-Device Terminal: Switch to the ADB Terminal tab above to grant permission directly on your phone without a PC.",
                 fontSize = 10.sp,
                 color = Color.White.copy(alpha = 0.65f),
                 lineHeight = 15.sp
@@ -782,7 +786,7 @@ private fun MinimalToolCard(
 }
 
 // =====================================================================
-// SCREEN 2: 🪄 MACRO (STREAMLINED & FIXED)
+// SCREEN 2: ðŸª„ MACRO (STREAMLINED & FIXED)
 // =====================================================================
 @Composable
 private fun MacroScreen(
@@ -808,7 +812,7 @@ private fun MacroScreen(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "🪄 AUTOMATED NETWORK MACRO",
+                text = "ðŸª„ AUTOMATED NETWORK MACRO",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
                 color = Color(0xFF38BDF8),
@@ -817,8 +821,8 @@ private fun MacroScreen(
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = "Executes complete network mode enforcement in 1 tap without manual interaction.\n" +
-                        "• If ADB/Shizuku permission is active: Mode switches instantly in the background (0ms delay).\n" +
-                        "• If Accessibility is enabled: Automatically navigates Settings and taps Preferred Network Type for you.",
+                        "â€¢ If ADB/Shizuku permission is active: Mode switches instantly in the background (0ms delay).\n" +
+                        "â€¢ If Accessibility is enabled: Automatically navigates Settings and taps Preferred Network Type for you.",
                 fontSize = 10.sp,
                 color = Color.White.copy(alpha = 0.7f),
                 lineHeight = 15.sp
@@ -839,7 +843,7 @@ private fun MacroScreen(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = if (isAdbAuthorized) "⚡" else if (isAccessibilityActive) "👆" else "⚠️", fontSize = 13.sp)
+            Text(text = if (isAdbAuthorized) "âš¡" else if (isAccessibilityActive) "ðŸ‘†" else "âš ï¸", fontSize = 13.sp)
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -924,7 +928,7 @@ private fun MacroScreen(
         Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(6.dp))
         Text(
-            text = if (isRunning) "MACRO EXECUTING…" else "RUN ${targetMacroMode.label().uppercase()} MACRO",
+            text = if (isRunning) "MACRO EXECUTINGâ€¦" else "RUN ${targetMacroMode.label().uppercase()} MACRO",
             fontSize = 12.sp,
             fontWeight = FontWeight.Black,
             color = Color.Black,
@@ -949,7 +953,7 @@ private fun MacroScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "▶ EXECUTING: ${runState.stepLabel}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                    Text(text = "â–¶ EXECUTING: ${runState.stepLabel}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
                     Text(text = "${(runState.progress * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
                 }
                 Spacer(modifier = Modifier.height(6.dp))
@@ -1020,7 +1024,7 @@ private fun MacroScreen(
 }
 
 // =====================================================================
-// SCREEN 3: 💻 ON-DEVICE ADB TERMINAL
+// SCREEN 3: ðŸ’» ON-DEVICE ADB TERMINAL
 // =====================================================================
 @Composable
 private fun AdbTerminalScreen(
@@ -1043,7 +1047,7 @@ private fun AdbTerminalScreen(
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Text(
-                text = "💻 ON-DEVICE ADB TERMINAL",
+                text = "ðŸ’» ON-DEVICE ADB TERMINAL",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
                 color = Color(0xFFF59E0B),
@@ -1190,7 +1194,7 @@ private fun AdbTerminalScreen(
         OutlinedTextField(
             value = inputCmd,
             onValueChange = { inputCmd = it },
-            placeholder = { Text("Enter command (e.g. pm grant …)", fontSize = 10.sp, color = Color.White.copy(alpha = 0.4f)) },
+            placeholder = { Text("Enter command (e.g. pm grant â€¦)", fontSize = 10.sp, color = Color.White.copy(alpha = 0.4f)) },
             singleLine = true,
             modifier = Modifier.weight(1f),
             colors = OutlinedTextFieldDefaults.colors(
@@ -1282,7 +1286,7 @@ private fun QuickActionButton(
 }
 
 // =====================================================================
-// SCREEN 4: ⚙️ SETTINGS & PERMISSIONS HUB
+// SCREEN 4: âš™ï¸ SETTINGS & PERMISSIONS HUB
 // =====================================================================
 @Composable
 private fun SettingsScreen(
@@ -1293,12 +1297,171 @@ private fun SettingsScreen(
     onOpenAccessibilitySettings: () -> Unit,
     onOpenRadioInfo: () -> Unit,
     onOpenMobileSettings: () -> Unit,
-    onRequestAddTile: (Boolean) -> Unit
+    onRequestAddTile: (Boolean) -> Unit,
+    onStartBridgeViaAdb: () -> Unit = {},
+    onStartBridgeViaRoot: () -> Unit = {},
+    onStopBridge: () -> Unit = {},
+    onTestBridgePing: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     val isAccessibilityActive = MacroAccessibilityService.isAccessibilityEnabled(context)
     val isAdbAuthorized = uiState.terminalState.isAuthorized || uiState.isDirectToggleGranted
+
+    // Section 0: Privileged Backend Service (app_process Binder Bridge)
+    Text(
+        text = "PRIVILEGED BACKEND SERVICE (APP_PROCESS BINDER)",
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Black,
+        color = Color(0xFFF59E0B),
+        letterSpacing = 0.5.sp,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+    )
+
+    val bridgeState = uiState.bridgeState
+    val isBridgeConnected = bridgeState is com.example.networktoggle.bridge.BridgeConnectionState.Connected
+    val bridgeStatusColor = if (isBridgeConnected) Color(0xFF10B981) else Color(0xFFF59E0B)
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF101624),
+        border = BorderStroke(1.dp, bridgeStatusColor.copy(alpha = 0.25f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(bridgeStatusColor)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isBridgeConnected) {
+                            val conn = bridgeState as com.example.networktoggle.bridge.BridgeConnectionState.Connected
+                            val identity = if (conn.isRoot) "Root (UID 0)" else "ADB Shell (UID ${conn.uid})"
+                            "Bridge Active • $identity"
+                        } else {
+                            "Bridge Inactive • app_process Daemon"
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = bridgeStatusColor
+                    )
+                    Text(
+                        text = if (isBridgeConnected) {
+                            val conn = bridgeState as com.example.networktoggle.bridge.BridgeConnectionState.Connected
+                            "Process PID: ${conn.pid} • Binder IPC connected"
+                        } else {
+                            "Runs directly on device with ADB shell (UID 2000) or Root (UID 0)"
+                        },
+                        fontSize = 9.sp,
+                        color = Color.White.copy(alpha = 0.55f)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = "Acts as an elevated proxy between this app and Android System Server via Binder IPC. Switches frequencies directly without user interaction.",
+                fontSize = 9.sp,
+                color = Color.White.copy(alpha = 0.65f),
+                lineHeight = 13.sp
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (isBridgeConnected) {
+                    Button(
+                        onClick = onTestBridgePing,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    ) {
+                        Text("TEST PING", color = Color(0xFF38BDF8), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = onStopBridge,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444).copy(alpha = 0.2f)),
+                        border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    ) {
+                        Text("STOP DAEMON", color = Color(0xFFEF4444), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    Button(
+                        onClick = onStartBridgeViaAdb,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(32.dp)
+                    ) {
+                        Text("START VIA ADB", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+                    if (uiState.isKernelRootDetected) {
+                        Button(
+                            onClick = onStartBridgeViaRoot,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.weight(1f).height(32.dp)
+                        ) {
+                            Text("START VIA ROOT", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            val pcCmd = com.example.networktoggle.bridge.PrivilegedBridgeManager.getAdbPcCommand(context)
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFF070A12),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "PC launch command (Wireless / USB Debugging):",
+                        fontSize = 9.sp,
+                        color = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            clipboardManager.setText(AnnotatedString(pcCmd))
+                            Toast.makeText(context, "Copied app_process launch command to clipboard!", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+                        modifier = Modifier.height(24.dp)
+                    ) {
+                        Text("COPY", color = Color(0xFF38BDF8), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
 
     // Section 1: Permissions & Access Status
     Text(
@@ -1320,7 +1483,7 @@ private fun SettingsScreen(
             // 1. Telephony Permission
             PermissionStatusRow(
                 title = "Telephony Hardware Access",
-                subtitle = if (uiState.hasPermission) "Granted • Live 5G/4G radio telemetry operational" else "Action needed • Required for live network reading",
+                subtitle = if (uiState.hasPermission) "Granted â€¢ Live 5G/4G radio telemetry operational" else "Action needed â€¢ Required for live network reading",
                 isGranted = uiState.hasPermission,
                 actionLabel = if (!uiState.hasPermission) "GRANT" else null,
                 onAction = onRequestPhonePermission
@@ -1331,7 +1494,7 @@ private fun SettingsScreen(
             // 2. On-Device ADB / Shizuku
             PermissionStatusRow(
                 title = "On-Device ADB (Shizuku)",
-                subtitle = if (isAdbAuthorized) "Authorized • Instant background frequency switching ready" else "Not authorized • Enables direct 1-tap mode toggles",
+                subtitle = if (isAdbAuthorized) "Authorized â€¢ Instant background frequency switching ready" else "Not authorized â€¢ Enables direct 1-tap mode toggles",
                 isGranted = isAdbAuthorized,
                 actionLabel = if (!isAdbAuthorized) "AUTHORIZE" else null,
                 onAction = onRequestAdbPermission
@@ -1342,7 +1505,7 @@ private fun SettingsScreen(
             // 3. Accessibility Automation
             PermissionStatusRow(
                 title = "Accessibility Automation",
-                subtitle = if (isAccessibilityActive) "Active • Automated touch navigation & SIM clicks ready" else "Inactive • Automates Settings navigation without ADB",
+                subtitle = if (isAccessibilityActive) "Active â€¢ Automated touch navigation & SIM clicks ready" else "Inactive â€¢ Automates Settings navigation without ADB",
                 isGranted = isAccessibilityActive,
                 actionLabel = if (!isAccessibilityActive) "ENABLE" else null,
                 onAction = onOpenAccessibilitySettings
@@ -1353,7 +1516,7 @@ private fun SettingsScreen(
             // 4. Kernel Root Access
             PermissionStatusRow(
                 title = "Kernel Root (SU)",
-                subtitle = if (uiState.isKernelRootDetected) "Detected • Elevated SU shell command execution available" else "Not detected • Standard secure Android sandbox active",
+                subtitle = if (uiState.isKernelRootDetected) "Detected â€¢ Elevated SU shell command execution available" else "Not detected â€¢ Standard secure Android sandbox active",
                 isGranted = uiState.isKernelRootDetected,
                 actionLabel = null,
                 onAction = {}
@@ -1416,7 +1579,7 @@ private fun SettingsScreen(
             modifier = Modifier.weight(1f).clickable { onOpenRadioInfo() }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(text = "🔧 Force Radio Menu", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "ðŸ”§ Force Radio Menu", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Text(text = "*#*#4636#*#* Testing activity", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
             }
         }
@@ -1427,7 +1590,7 @@ private fun SettingsScreen(
             modifier = Modifier.weight(1f).clickable { onOpenMobileSettings() }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(text = "🌐 SIMs & Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "ðŸŒ SIMs & Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Text(text = "System operator settings", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
             }
         }

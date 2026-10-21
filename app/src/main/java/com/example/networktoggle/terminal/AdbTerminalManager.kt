@@ -48,7 +48,7 @@ data class AdbTerminalState(
     val isRootAvailable: Boolean = false,
     val isExecuting: Boolean = false,
     val logs: List<TerminalLine> = emptyList(),
-    val statusMessage: String = "Initializing ADB Terminal…"
+    val statusMessage: String = "Initializing ADB TerminalÃ¢â‚¬Â¦"
 )
 
 class AdbTerminalManager(
@@ -71,8 +71,8 @@ class AdbTerminalManager(
         if (requestCode == SHIZUKU_REQUEST_CODE) {
             val isGranted = grantResult == PackageManager.PERMISSION_GRANTED
             appendLine(
-                if (isGranted) "✔ Shizuku permission granted! Terminal authorized."
-                else "ℹ️ Shizuku permission request was dismissed.",
+                if (isGranted) "Ã¢Å“â€ Shizuku permission granted! Terminal authorized."
+                else "Ã¢â€žÂ¹Ã¯Â¸Â Shizuku permission request was dismissed.",
                 TerminalLineType.SYSTEM
             )
             refreshState()
@@ -80,12 +80,12 @@ class AdbTerminalManager(
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        appendLine("⚡ Shizuku service connected on device.", TerminalLineType.SYSTEM)
+        appendLine("Ã¢Å¡Â¡ Shizuku service connected on device.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        appendLine("ℹ️ Shizuku service disconnected.", TerminalLineType.SYSTEM)
+        appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku service disconnected.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
@@ -125,10 +125,10 @@ class AdbTerminalManager(
 
             val authorized = shizukuGranted || rootAvailable
             val statusMsg = when {
-                shizukuGranted -> "🟢 Authorized via Shizuku (On-Device ADB Active)"
-                rootAvailable -> "🟢 Authorized via Kernel Root"
-                shizukuRunning -> "🟡 Shizuku Active • Tap 'Grant' to authorize"
-                else -> "⚪ Ready (Standard & Built-in commands supported)"
+                shizukuGranted -> "Ã°Å¸Å¸Â¢ Authorized via Shizuku (On-Device ADB Active)"
+                rootAvailable -> "Ã°Å¸Å¸Â¢ Authorized via Kernel Root"
+                shizukuRunning -> "Ã°Å¸Å¸Â¡ Shizuku Active Ã¢â‚¬Â¢ Tap 'Grant' to authorize"
+                else -> "Ã¢Å¡Âª Ready (Standard & Built-in commands supported)"
             }
 
             _state.update {
@@ -179,37 +179,37 @@ class AdbTerminalManager(
             if (shizukuRunning) {
                 try {
                     if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                        appendLine("✔ Permission already granted via Shizuku.", TerminalLineType.SYSTEM)
+                        appendLine("Ã¢Å“â€ Permission already granted via Shizuku.", TerminalLineType.SYSTEM)
                         refreshState()
                     } else {
-                        appendLine("Prompting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
+                        appendLine("Prompting Shizuku authorization dialog on phoneÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
                         Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
                     }
                 } catch (e: Exception) {
-                    appendLine("ℹ️ Shizuku prompt notice: ${e.message}", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku prompt notice: ${e.message}", TerminalLineType.SYSTEM)
                 }
             } else if (checkRootAvailable()) {
-                appendLine("Checking Root authorization on device…", TerminalLineType.SYSTEM)
+                appendLine("Checking Root authorization on deviceÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
                 try {
                     val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
                     proc.waitFor()
-                    appendLine("✔ Root permission confirmed.", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢Å“â€ Root permission confirmed.", TerminalLineType.SYSTEM)
                     refreshState()
                 } catch (e: Exception) {
-                    appendLine("ℹ️ Root check notice: ${e.message}", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Root check notice: ${e.message}", TerminalLineType.SYSTEM)
                 }
             } else {
                 if (isShizukuInstalled()) {
-                    appendLine("ℹ️ Shizuku app is installed on phone, but service is not running.", TerminalLineType.SYSTEM)
-                    appendLine("👉 Open Shizuku, tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku app is installed on phone, but service is not running.", TerminalLineType.SYSTEM)
+                    appendLine("Ã°Å¸â€˜â€° Open Shizuku, tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
                     withContext(Dispatchers.Main) {
                         launchShizukuApp()
                     }
                 } else {
-                    appendLine("ℹ️ Shizuku is not running on this phone.", TerminalLineType.SYSTEM)
-                    appendLine("💡 Option 1: Install Shizuku & start it via Wireless Debugging (No PC needed).", TerminalLineType.SYSTEM)
-                    appendLine("💡 Option 2: Run once via PC: adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS", TerminalLineType.SYSTEM)
-                    appendLine("💡 Option 3: Use the 'Toggle' or 'Macro' tab which works via Accessibility without any ADB.", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku is not running on this phone.", TerminalLineType.SYSTEM)
+                    appendLine("Ã°Å¸â€™Â¡ Option 1: Install Shizuku & start it via Wireless Debugging (No PC needed).", TerminalLineType.SYSTEM)
+                    appendLine("Ã°Å¸â€™Â¡ Option 2: Run once via PC: adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS", TerminalLineType.SYSTEM)
+                    appendLine("Ã°Å¸â€™Â¡ Option 3: Use the 'Toggle' or 'Macro' tab which works via Accessibility without any ADB.", TerminalLineType.SYSTEM)
                 }
             }
         }
@@ -236,6 +236,7 @@ class AdbTerminalManager(
                 appendLine("  auto      : Set dynamic 5G/4G multi-mode", TerminalLineType.OUTPUT)
                 appendLine("  grant     : Request WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
                 appendLine("  devices   : Show current connected engine status", TerminalLineType.OUTPUT)
+                appendLine("  bridge    : Manage Privileged Backend Service (app_process daemon)", TerminalLineType.OUTPUT)
                 appendLine("  clear     : Clear terminal console output", TerminalLineType.OUTPUT)
                 appendLine("  You can also type standard shell commands (e.g. getprop, id, date)", TerminalLineType.OUTPUT)
                 return
@@ -276,6 +277,38 @@ class AdbTerminalManager(
                 setNetworkModeViaAdb(NetworkMode.AUTO)
                 return
             }
+            "bridge" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                val isConn = com.example.networktoggle.bridge.PrivilegedBridgeManager.isConnected
+                if (isConn) {
+                    val uid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedUid
+                    val pid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedPid
+                    val identity = if (uid == 0) "Root UID 0" else "ADB Shell UID $uid"
+                    appendLine("ðŸŸ¢ Privileged Backend Service is ACTIVE ($identity, PID: $pid).", TerminalLineType.SYSTEM)
+                    appendLine("   Binder IPC is connected to Android System Server.", TerminalLineType.OUTPUT)
+                } else {
+                    appendLine("âšª Privileged Backend Service is INACTIVE.", TerminalLineType.OUTPUT)
+                    appendLine("   Type 'bridge start' to launch the background app_process daemon.", TerminalLineType.OUTPUT)
+                }
+                return
+            }
+            "bridge start" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                appendLine("âš¡ Launching Privileged Backend Service via app_process...", TerminalLineType.SYSTEM)
+                val cmd = com.example.networktoggle.bridge.PrivilegedBridgeManager.getLaunchCommand(context)
+                executeCommand(cmd)
+                return
+            }
+            "bridge stop" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                val stopped = com.example.networktoggle.bridge.PrivilegedBridgeManager.stopService()
+                if (stopped) {
+                    appendLine("ðŸ›‘ Privileged Backend Service stopped.", TerminalLineType.SYSTEM)
+                } else {
+                    appendLine("â„¹ï¸ Privileged Backend Service was not running.", TerminalLineType.OUTPUT)
+                }
+                return
+            }
             "grant" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
                 grantWriteSecureSettings()
@@ -293,14 +326,14 @@ class AdbTerminalManager(
 
         if (isPrivileged && !_state.value.isAuthorized) {
             appendLine("$ $trimmed", TerminalLineType.COMMAND)
-            appendLine("ℹ️ Elevated ADB privileges are required for system command: $trimmed", TerminalLineType.SYSTEM)
+            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Elevated ADB privileges are required for system command: $trimmed", TerminalLineType.SYSTEM)
             if (_state.value.isShizukuRunning) {
-                appendLine("👉 Shizuku is active! Tap 'GRANT' above to authorize this terminal.", TerminalLineType.SYSTEM)
+                appendLine("Ã°Å¸â€˜â€° Shizuku is active! Tap 'GRANT' above to authorize this terminal.", TerminalLineType.SYSTEM)
                 requestPermission()
             } else {
-                appendLine("👉 Option A: Tap 'GRANT' above to start Shizuku (Wireless Debugging, No PC).", TerminalLineType.SYSTEM)
-                appendLine("👉 Option B: Run via PC: adb shell $trimmed", TerminalLineType.SYSTEM)
-                appendLine("👉 Option C: Use the 'Toggle' or 'Macro' tab which works via Accessibility without ADB.", TerminalLineType.SYSTEM)
+                appendLine("Ã°Å¸â€˜â€° Option A: Tap 'GRANT' above to start Shizuku (Wireless Debugging, No PC).", TerminalLineType.SYSTEM)
+                appendLine("Ã°Å¸â€˜â€° Option B: Run via PC: adb shell $trimmed", TerminalLineType.SYSTEM)
+                appendLine("Ã°Å¸â€˜â€° Option C: Use the 'Toggle' or 'Macro' tab which works via Accessibility without ADB.", TerminalLineType.SYSTEM)
             }
             return
         }
@@ -319,7 +352,7 @@ class AdbTerminalManager(
                     try {
                         process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
                     } catch (e: Exception) {
-                        appendLine("ℹ️ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
+                        appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku notice: ${e.message}. Using fallback engineÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
                     }
                 }
 
@@ -361,13 +394,13 @@ class AdbTerminalManager(
 
                 if (exitCode == 0) {
                     if (!hasOutput && !hasError) {
-                        appendLine("✔ Command executed successfully.", TerminalLineType.SYSTEM)
+                        appendLine("Ã¢Å“â€ Command executed successfully.", TerminalLineType.SYSTEM)
                     }
                 } else {
-                    appendLine("ℹ️ Command completed (code $exitCode)", TerminalLineType.SYSTEM)
+                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Command completed (code $exitCode)", TerminalLineType.SYSTEM)
                 }
             } catch (e: Exception) {
-                appendLine("ℹ️ Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
+                appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
             } finally {
                 _state.update { it.copy(isExecuting = false) }
             }
@@ -413,10 +446,10 @@ class AdbTerminalManager(
         val cmd = "pm grant $pkg android.permission.WRITE_SECURE_SETTINGS"
         if (_state.value.isAuthorized) {
             executeCommand(cmd)
-            appendLine("✔ WRITE_SECURE_SETTINGS command dispatched.", TerminalLineType.SYSTEM)
+            appendLine("Ã¢Å“â€ WRITE_SECURE_SETTINGS command dispatched.", TerminalLineType.SYSTEM)
         } else {
             appendLine("$ $cmd", TerminalLineType.COMMAND)
-            appendLine("ℹ️ To grant WRITE_SECURE_SETTINGS without a PC:", TerminalLineType.SYSTEM)
+            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â To grant WRITE_SECURE_SETTINGS without a PC:", TerminalLineType.SYSTEM)
             appendLine("  1. Tap 'GRANT' above if you have Shizuku / Wireless Debugging running.", TerminalLineType.SYSTEM)
             appendLine("  2. Or if using a PC terminal, run: adb shell $cmd", TerminalLineType.SYSTEM)
         }
@@ -441,10 +474,10 @@ class AdbTerminalManager(
             executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
             executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
             executeCommand("settings put global preferred_network_mode $modeVal")
-            appendLine("✔ Network mode applied via ADB telephony service.", TerminalLineType.SYSTEM)
+            appendLine("Ã¢Å“â€ Network mode applied via ADB telephony service.", TerminalLineType.SYSTEM)
         } else {
-            appendLine("ℹ️ Elevated terminal authorization required to switch modem via ADB.", TerminalLineType.SYSTEM)
-            appendLine("👉 Use the 'Toggle' or 'Macro' tab to switch automatically without ADB, or tap 'GRANT' above.", TerminalLineType.SYSTEM)
+            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Elevated terminal authorization required to switch modem via ADB.", TerminalLineType.SYSTEM)
+            appendLine("Ã°Å¸â€˜â€° Use the 'Toggle' or 'Macro' tab to switch automatically without ADB, or tap 'GRANT' above.", TerminalLineType.SYSTEM)
         }
     }
 

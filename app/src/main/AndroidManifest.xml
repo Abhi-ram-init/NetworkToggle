@@ -138,6 +138,13 @@
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
+        <!-- Privileged Bridge Provider for on-device app_process Binder IPC -->
+        <provider
+            android:name=".bridge.PrivilegedBridgeProvider"
+            android:authorities="${applicationId}.bridge.provider"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true" />
     </application>
 
 </manifest>
