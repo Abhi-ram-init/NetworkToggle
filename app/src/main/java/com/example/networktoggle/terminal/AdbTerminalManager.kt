@@ -11,13 +11,19 @@ import com.example.networktoggle.bridge.PrivilegedBridgeManager
 import com.example.networktoggle.network.NetworkMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
+import rikka.shizuku.ShizukuProvider
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.text.SimpleDateFormat
@@ -77,6 +83,7 @@ class AdbTerminalManager(
         private const val GLOBAL_MODE_4G = 10
     }
 
+    private val commandMutex = Mutex()
     private val _state = MutableStateFlow(AdbTerminalState())
     val state: StateFlow<AdbTerminalState> = _state.asStateFlow()
 
@@ -359,8 +366,18 @@ class AdbTerminalManager(
     }
 
     fun executeCommand(commandStr: String) {
-        val trimmed = commandStr.trim()
+        var trimmed = commandStr.trim()
         if (trimmed.isBlank()) return
+
+        // Strip redundant "adb shell " or "adb " prefix if user copy-pasted PC ADB commands
+        if (trimmed.startsWith("adb shell ", ignoreCase = true)) {
+            trimmed = trimmed.substring("adb shell ".length).trim()
+        } else if (trimmed.startsWith("adb ", ignoreCase = true)) {
+            val withoutAdb = trimmed.substring("adb ".length).trim()
+            if (!withoutAdb.startsWith("devices", ignoreCase = true)) {
+                trimmed = withoutAdb
+            }
+        }
 
         // 1. Built-in errorless commands that never fail
         when (trimmed.lowercase(Locale.getDefault())) {
@@ -598,122 +615,149 @@ class AdbTerminalManager(
 
     private fun executePipeline(trimmed: String) {
         scope.launch(Dispatchers.IO) {
-            _state.update { it.copy(isExecuting = true) }
-            appendLine("$ $trimmed", TerminalLineType.COMMAND)
+            commandMutex.withLock {
+                _state.update { it.copy(isExecuting = true) }
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
 
-            try {
-                val currentEngine = _state.value.engine
+                try {
+                    val currentEngine = _state.value.engine
 
-                // 1. Privileged Bridge Execution (UID 2000 or UID 0)
-                if (currentEngine == AdbEngine.PRIVILEGED_BRIDGE && PrivilegedBridgeManager.isConnected) {
-                    val (exitCode, outputLines) = PrivilegedBridgeManager.executeCommand(trimmed)
-                    var hasOutput = false
-                    for (line in outputLines) {
-                        hasOutput = true
-                        if (line.startsWith("[ERR]")) {
-                            appendLine(line.removePrefix("[ERR] ").trim(), TerminalLineType.ERROR)
-                        } else {
-                            appendLine(line, TerminalLineType.OUTPUT)
+                    // 1. Privileged Bridge Execution (UID 2000 or UID 0)
+                    if (currentEngine == AdbEngine.PRIVILEGED_BRIDGE && PrivilegedBridgeManager.isConnected) {
+                        val (exitCode, outputLines) = PrivilegedBridgeManager.executeCommand(trimmed)
+                        var hasOutput = false
+                        for (line in outputLines) {
+                            hasOutput = true
+                            if (line.startsWith("[ERR]")) {
+                                appendLine(line.removePrefix("[ERR] ").trim(), TerminalLineType.ERROR)
+                            } else {
+                                appendLine(line, TerminalLineType.OUTPUT)
+                            }
                         }
+                        if (exitCode == 0) {
+                            if (!hasOutput) {
+                                appendLine("✔ Command executed successfully via Privileged Bridge.", TerminalLineType.SYSTEM)
+                            }
+                        } else {
+                            appendLine("ℹ Command finished with exit code $exitCode", TerminalLineType.SYSTEM)
+                        }
+                        refreshState()
+                        return@withLock
                     }
-                    if (exitCode == 0) {
-                        if (!hasOutput) {
-                            appendLine("✔ Command executed successfully via Privileged Bridge.", TerminalLineType.SYSTEM)
+
+                    // 2. Shizuku Execution (Elevated ADB Shell UID 2000 / UID 0)
+                    var process: Process? = null
+                    val shizukuAlive = try { Shizuku.pingBinder() } catch (_: Exception) { false }
+                    val shizukuPerm = shizukuAlive && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Exception) { false }
+
+                    if (shizukuPerm || (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning)) {
+                        try {
+                            process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
+                        } catch (e: Exception) {
+                            appendLine("ℹ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
+                        }
+                    } else if (shizukuAlive && !shizukuPerm && (trimmed.startsWith("pm ") || trimmed.startsWith("settings ") || trimmed.startsWith("cmd "))) {
+                        appendLine("⚠ Shizuku server is online, but authorization is needed for privileged commands.", TerminalLineType.SYSTEM)
+                        appendLine("👉 Requesting Shizuku authorization dialog now…", TerminalLineType.SYSTEM)
+                        try {
+                            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+                        } catch (_: Exception) {}
+                    }
+
+                    // 3. Kernel Root Execution (UID 0)
+                    if (process == null && (currentEngine == AdbEngine.ROOT || _state.value.isRootAvailable)) {
+                        try {
+                            process = Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
+                        } catch (_: Exception) {}
+                    }
+
+                    // 4. Local Shell Execution (Native Android Linux Shell)
+                    if (process == null) {
+                        process = Runtime.getRuntime().exec(arrayOf("sh", "-c", trimmed))
+                    }
+
+                    // Close stdin immediately so subprocesses expecting EOF don't hang
+                    try {
+                        process.outputStream.close()
+                    } catch (_: Exception) {}
+
+                    var hasOutput = false
+                    var hasError = false
+
+                    // Parallel async stream consumers to prevent pipe buffer deadlocks
+                    val stdoutJob = async(Dispatchers.IO) {
+                        try {
+                            BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                                var line: String?
+                                while (reader.readLine().also { line = it } != null) {
+                                    hasOutput = true
+                                    appendLine(line ?: "", TerminalLineType.OUTPUT)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    val stderrJob = async(Dispatchers.IO) {
+                        try {
+                            BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+                                var line: String?
+                                while (reader.readLine().also { line = it } != null) {
+                                    hasError = true
+                                    appendLine(line ?: "", TerminalLineType.ERROR)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    // Non-blocking timeout protection (15 seconds max)
+                    val exitCode = withTimeoutOrNull(15000L) {
+                        stdoutJob.await()
+                        stderrJob.await()
+                        process.waitFor()
+                    }
+
+                    if (exitCode == null) {
+                        try {
+                            process.destroy()
+                        } catch (_: Exception) {}
+                        appendLine("⏱ Execution timed out after 15s (process killed).", TerminalLineType.ERROR)
+                    } else if (exitCode == 0) {
+                        if (!hasOutput && !hasError) {
+                            appendLine("✔ Command executed successfully (exit code 0).", TerminalLineType.SYSTEM)
                         }
                     } else {
-                        appendLine("ℹ Command finished with exit code $exitCode", TerminalLineType.SYSTEM)
+                        appendLine("ℹ Process finished with exit code $exitCode", TerminalLineType.SYSTEM)
+                        val isPrivileged = trimmed.startsWith("pm grant", ignoreCase = true) ||
+                                trimmed.startsWith("pm revoke", ignoreCase = true) ||
+                                trimmed.startsWith("cmd phone", ignoreCase = true) ||
+                                trimmed.startsWith("settings put", ignoreCase = true)
+                        if (isPrivileged && !_state.value.isAuthorized) {
+                            appendLine("💡 Tip: Tap 'Connect' or 'Auth' at top to grant elevated Shizuku shell permissions.", TerminalLineType.SYSTEM)
+                        }
                     }
+                } catch (e: Exception) {
+                    appendLine("ℹ Execution error: ${e.localizedMessage ?: e.message}", TerminalLineType.ERROR)
+                } finally {
+                    _state.update { it.copy(isExecuting = false) }
                     refreshState()
-                    return@launch
                 }
-
-                // 2. Shizuku Execution (UID 2000)
-                var process: Process? = null
-                val shizukuAlive = try { Shizuku.pingBinder() } catch (_: Exception) { false }
-                val shizukuPerm = shizukuAlive && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Exception) { false }
-
-                if (shizukuPerm || (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning)) {
-                    try {
-                        process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
-                    } catch (e: Exception) {
-                        appendLine("ℹ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
-                    }
-                } else if (shizukuAlive && !shizukuPerm && (trimmed.startsWith("pm ") || trimmed.startsWith("settings ") || trimmed.startsWith("cmd "))) {
-                    appendLine("⚠ Shizuku server is online, but permission is required for privileged commands.", TerminalLineType.SYSTEM)
-                    appendLine("👉 Requesting Shizuku authorization dialog now…", TerminalLineType.SYSTEM)
-                    try {
-                        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
-                    } catch (_: Exception) {}
-                }
-
-                // 3. Kernel Root Execution (UID 0)
-                if (process == null && (currentEngine == AdbEngine.ROOT || _state.value.isRootAvailable)) {
-                    try {
-                        process = Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
-                    } catch (_: Exception) {}
-                }
-
-                // 4. Local Shell Execution (Native Android Linux Shell)
-                if (process == null) {
-                    process = Runtime.getRuntime().exec(arrayOf("sh", "-c", trimmed))
-                }
-
-                // Safely read output streams
-                val stdOutReader = BufferedReader(InputStreamReader(process.inputStream))
-                val stdErrReader = BufferedReader(InputStreamReader(process.errorStream))
-
-                var outLine: String?
-                var hasOutput = false
-                while (stdOutReader.readLine().also { outLine = it } != null) {
-                    hasOutput = true
-                    appendLine(outLine ?: "", TerminalLineType.OUTPUT)
-                }
-
-                var errLine: String?
-                var hasError = false
-                while (stdErrReader.readLine().also { errLine = it } != null) {
-                    hasError = true
-                    appendLine(errLine ?: "", TerminalLineType.ERROR)
-                }
-
-                val exitCode = try {
-                    process.waitFor()
-                } catch (_: Exception) {
-                    0
-                }
-
-                if (exitCode == 0) {
-                    if (!hasOutput && !hasError) {
-                        appendLine("✔ Command executed successfully.", TerminalLineType.SYSTEM)
-                    }
-                } else {
-                    appendLine("ℹ Command finished with exit code $exitCode", TerminalLineType.SYSTEM)
-                    val isPrivileged = trimmed.startsWith("pm grant", ignoreCase = true) ||
-                            trimmed.startsWith("pm revoke", ignoreCase = true) ||
-                            trimmed.startsWith("cmd phone", ignoreCase = true) ||
-                            trimmed.startsWith("settings put", ignoreCase = true)
-                    if (isPrivileged && !_state.value.isAuthorized) {
-                        appendLine("💡 Tip: Tap 'GRANT PERMISSION' or run 'bridge start' to elevate terminal privileges.", TerminalLineType.SYSTEM)
-                    }
-                }
-            } catch (e: Exception) {
-                appendLine("ℹ Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
-            } finally {
-                _state.update { it.copy(isExecuting = false) }
-                refreshState()
             }
         }
     }
 
     private fun spawnShizukuProcess(cmdArray: Array<String>): Process {
-        val method = Shizuku::class.java.getDeclaredMethod(
-            "newProcess",
-            Array<String>::class.java,
-            Array<String>::class.java,
-            String::class.java
-        )
-        method.isAccessible = true
-        return method.invoke(null, cmdArray, null, null) as Process
+        try {
+            val method = Shizuku::class.java.getDeclaredMethod(
+                "newProcess",
+                Array<String>::class.java,
+                Array<String>::class.java,
+                String::class.java
+            )
+            method.isAccessible = true
+            return method.invoke(null, cmdArray, null, null) as Process
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw (e.targetException ?: e)
+        }
     }
 
     /**
@@ -749,28 +793,61 @@ class AdbTerminalManager(
         val cmd = "pm grant $pkg android.permission.WRITE_SECURE_SETTINGS"
 
         scope.launch(Dispatchers.IO) {
+            val alreadyGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_SECURE_SETTINGS
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (alreadyGranted) {
+                appendLine("✔ WRITE_SECURE_SETTINGS is ALREADY GRANTED on this device!", TerminalLineType.SYSTEM)
+                appendLine("🟢 4G/5G switching is active and ready.", TerminalLineType.SYSTEM)
+                refreshState()
+                return@launch
+            }
+
+            val isShizukuReady = try {
+                Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } catch (_: Exception) { false }
+
             if (PrivilegedBridgeManager.isConnected) {
                 val ok = PrivilegedBridgeManager.grantWriteSecureSettings(context)
                 if (ok) {
                     appendLine("✔ WRITE_SECURE_SETTINGS granted via Privileged Bridge System Server!", TerminalLineType.SYSTEM)
-                    appendLine("🟢 4G/5G toggle is now fully enabled! Tap 'Toggle' tab or type '5g'/'4g'.", TerminalLineType.SYSTEM)
+                    appendLine("🟢 4G/5G toggle is now fully enabled!", TerminalLineType.SYSTEM)
                 } else {
-                    executeCommand(cmd)
+                    executePipeline(cmd)
                 }
                 refreshState()
-            } else if (_state.value.isAuthorized) {
-                executeCommand(cmd)
-                appendLine("✔ WRITE_SECURE_SETTINGS grant command dispatched via elevated shell.", TerminalLineType.SYSTEM)
-                appendLine("🟢 4G/5G toggle is now enabled!", TerminalLineType.SYSTEM)
+            } else if (isShizukuReady || _state.value.isAuthorized) {
+                executePipeline(cmd)
+                val isNowGranted = ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_SECURE_SETTINGS
+                ) == PackageManager.PERMISSION_GRANTED
+                if (isNowGranted) {
+                    appendLine("✔ WRITE_SECURE_SETTINGS granted successfully via Shizuku shell!", TerminalLineType.SYSTEM)
+                    appendLine("🟢 4G/5G toggle is now enabled!", TerminalLineType.SYSTEM)
+                } else {
+                    appendLine("✔ Grant command dispatched via elevated shell.", TerminalLineType.SYSTEM)
+                }
                 refreshState()
             } else {
-                appendLine("$ $cmd", TerminalLineType.COMMAND)
-                appendLine("ℹ Attempting local shell dispatch: $cmd", TerminalLineType.SYSTEM)
-                executePipeline(cmd)
-                appendLine("💡 To grant on this phone without a PC:", TerminalLineType.SYSTEM)
-                appendLine("  1. Tap 'GRANT' above if you have Shizuku or Wireless Debugging active.", TerminalLineType.SYSTEM)
-                appendLine("  2. Or if connected to a PC, run: adb shell $cmd", TerminalLineType.SYSTEM)
-                appendLine("  3. Or launch Privileged Bridge: Type 'bridge start' in this terminal.", TerminalLineType.SYSTEM)
+                val shizukuRunning = try { Shizuku.pingBinder() } catch (_: Exception) { false }
+                if (shizukuRunning) {
+                    appendLine("🟡 Shizuku server is online, but authorization is needed.", TerminalLineType.SYSTEM)
+                    appendLine("👉 Requesting Shizuku permission dialog now...", TerminalLineType.SYSTEM)
+                    try {
+                        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+                    } catch (_: Exception) {}
+                } else {
+                    appendLine("$ $cmd", TerminalLineType.COMMAND)
+                    appendLine("ℹ Attempting local shell dispatch: $cmd", TerminalLineType.SYSTEM)
+                    executePipeline(cmd)
+                    appendLine("💡 To grant on this phone without a PC:", TerminalLineType.SYSTEM)
+                    appendLine("  1. Tap 'Connect' above if you have Shizuku or Wireless Debugging active.", TerminalLineType.SYSTEM)
+                    appendLine("  2. Or if connected to a PC, run: adb shell $cmd", TerminalLineType.SYSTEM)
+                    appendLine("  3. Or launch Privileged Bridge: Type 'bridge start' in this terminal.", TerminalLineType.SYSTEM)
+                }
             }
         }
     }
@@ -783,17 +860,21 @@ class AdbTerminalManager(
         val cmd = "pm revoke $pkg android.permission.WRITE_SECURE_SETTINGS"
 
         scope.launch(Dispatchers.IO) {
+            val isShizukuReady = try {
+                Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+            } catch (_: Exception) { false }
+
             if (PrivilegedBridgeManager.isConnected) {
                 val ok = PrivilegedBridgeManager.revokeWriteSecureSettings(context)
                 if (ok) {
                     appendLine("🛑 WRITE_SECURE_SETTINGS permission has been REVOKED via Privileged Bridge.", TerminalLineType.SYSTEM)
                     appendLine("ℹ Background 4G/5G switching disabled. Run 'grant' to enable it again.", TerminalLineType.SYSTEM)
                 } else {
-                    executeCommand(cmd)
+                    executePipeline(cmd)
                 }
                 refreshState()
-            } else if (_state.value.isAuthorized) {
-                executeCommand(cmd)
+            } else if (isShizukuReady || _state.value.isAuthorized) {
+                executePipeline(cmd)
                 appendLine("🛑 WRITE_SECURE_SETTINGS revoke command dispatched via elevated shell.", TerminalLineType.SYSTEM)
                 appendLine("ℹ Permission disabled. Run 'grant' to re-enable.", TerminalLineType.SYSTEM)
                 refreshState()
@@ -821,6 +902,17 @@ class AdbTerminalManager(
             NetworkMode.FOUR_G -> GLOBAL_MODE_4G
         }
 
+        val isShizukuReady = try {
+            Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        } catch (_: Exception) { false }
+
+        // Multi-tier direct setting fallback
+        try {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED) {
+                android.provider.Settings.Global.putInt(context.contentResolver, "preferred_network_mode", modeVal)
+            }
+        } catch (_: Exception) {}
+
         if (PrivilegedBridgeManager.isConnected) {
             scope.launch {
                 val ok = PrivilegedBridgeManager.setNetworkMode(mode)
@@ -832,7 +924,7 @@ class AdbTerminalManager(
                     executeCommand("settings put global preferred_network_mode $modeVal")
                 }
             }
-        } else if (_state.value.isAuthorized) {
+        } else if (isShizukuReady || _state.value.isAuthorized) {
             executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
             executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
             executeCommand("settings put global preferred_network_mode $modeVal")
@@ -840,7 +932,7 @@ class AdbTerminalManager(
         } else {
             appendLine("ℹ Running in Local Shell mode. Dispatching telephony switch…", TerminalLineType.SYSTEM)
             executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
-            appendLine("💡 Tip: Run 'grant' to authorize WRITE_SECURE_SETTINGS, or use the 'Macro' tab via Accessibility.", TerminalLineType.SYSTEM)
+            appendLine("💡 Tip: Tap 'Connect' or 'grant' to authorize elevated Shizuku shell.", TerminalLineType.SYSTEM)
         }
     }
 
