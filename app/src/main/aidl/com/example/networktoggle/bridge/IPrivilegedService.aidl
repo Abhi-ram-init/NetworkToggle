@@ -11,5 +11,6 @@ interface IPrivilegedService {
     boolean setAllowedNetworkTypesForReason(String token, int subId, int reason, long allowedBitmask);
     boolean putGlobalSetting(String token, String key, String value);
     boolean grantRuntimePermission(String token, String packageName, String permission);
+    boolean revokeRuntimePermission(String token, String packageName, String permission);
     void exit(String token);
 }

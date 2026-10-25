@@ -172,6 +172,19 @@ object PrivilegedBridgeManager {
         }
     }
 
+    suspend fun revokeWriteSecureSettings(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val service = activeService ?: return@withContext false
+        return@withContext try {
+            service.revokeRuntimePermission(
+                activeToken,
+                context.packageName,
+                "android.permission.WRITE_SECURE_SETTINGS"
+            )
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun executeCommand(command: String): Pair<Int, List<String>> = withContext(Dispatchers.IO) {
         val service = activeService ?: return@withContext Pair(-1, listOf("Privileged service not connected"))
         return@withContext try {

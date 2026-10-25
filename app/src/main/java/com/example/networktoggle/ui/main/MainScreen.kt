@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -18,15 +19,21 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -34,6 +41,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SignalCellularAlt
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Widgets
@@ -42,6 +50,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -50,24 +59,31 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.example.networktoggle.bridge.BridgeConnectionState
+import com.example.networktoggle.bridge.PrivilegedBridgeManager
 import com.example.networktoggle.macro.MacroAccessibilityService
+import com.example.networktoggle.macro.MacroActionType
 import com.example.networktoggle.macro.MacroExecutionState
+import com.example.networktoggle.macro.MacroStep
+import com.example.networktoggle.macro.RecordedMacro
 import com.example.networktoggle.network.NetworkMode
 import com.example.networktoggle.terminal.AdbEngine
 import com.example.networktoggle.terminal.TerminalLineType
 
 enum class NavigationTab(val title: String, val icon: String) {
-    SWITCHER("Toggle", "âš¡"),
-    MACRO("Macro", "ðŸª„"),
-    TERMINAL("ADB", "ðŸ’»"),
-    SETTINGS("Settings", "âš™ï¸")
+    TERMINAL("Terminal", "💻"),
+    SWITCHER("Toggle", "⚡"),
+    MACRO("Macro", "🪄"),
+    SETTINGS("Settings", "⚙️")
 }
 
 @Composable
@@ -95,7 +111,11 @@ fun MainScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var selectedTab by remember { mutableStateOf(NavigationTab.SWITCHER) }
+
+    // STEP 1 IS THE TERMINAL: Default to TERMINAL tab on start
+    var selectedTab by remember { mutableStateOf(NavigationTab.TERMINAL) }
+    var showGuidedAssistantDialog by remember { mutableStateOf(false) }
+    var showCreateMacroDialog by remember { mutableStateOf(false) }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -126,7 +146,7 @@ fun MainScreen(
 
     val is5G = uiState.currentConnectedMode == NetworkMode.FIVE_G
     val primaryColor = if (is5G) Color(0xFF10B981) else Color(0xFF06B6D4)
-    val bgColor = Color(0xFF080C14)
+    val bgColor = Color(0xFF070B14)
 
     Box(
         modifier = modifier
@@ -141,16 +161,17 @@ fun MainScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Sleek Minimal Top Bar
+            // Sleek Glowing Minimal Top Bar
             MinimalTopBar(
                 primaryColor = primaryColor,
                 is5G = is5G,
+                isElevated = uiState.isDirectToggleGranted || uiState.bridgeState is BridgeConnectionState.Connected,
                 onRefresh = viewModel::refreshLiveNetwork
             )
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Minimalist 4-Pill Navigation Bar
+            // Minimalist 4-Pill Segmented Navigation Bar (Step 1 Terminal is First)
             MinimalSegmentedNavBar(
                 currentTab = selectedTab,
                 accentColor = primaryColor,
@@ -168,6 +189,18 @@ fun MainScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     when (selectedTab) {
+                        NavigationTab.TERMINAL -> {
+                            AdbTerminalScreen(
+                                uiState = uiState,
+                                onRequestPermission = viewModel::requestAdbPermission,
+                                onExecuteCommand = viewModel::executeAdbCommand,
+                                onGrantSecureSettings = viewModel::grantAdbSecureSettings,
+                                onRevokeSecureSettings = viewModel::revokeAdbSecureSettings,
+                                onClearLogs = viewModel::clearAdbLogs,
+                                onSetMode = viewModel::setNetworkModeViaAdb,
+                                onNavigateToToggle = { selectedTab = NavigationTab.SWITCHER }
+                            )
+                        }
                         NavigationTab.SWITCHER -> {
                             SwitcherScreen(
                                 uiState = uiState,
@@ -176,10 +209,28 @@ fun MainScreen(
                                 onRequestPhonePermission = {
                                     permissionLauncher.launch(Manifest.permission.READ_PHONE_STATE)
                                 },
-                                onToggleQuick = { viewModel.toggleQuick(context) },
+                                onToggleQuick = {
+                                    val isElevated = uiState.isDirectToggleGranted ||
+                                            uiState.bridgeState is BridgeConnectionState.Connected ||
+                                            uiState.terminalState.isAuthorized ||
+                                            uiState.isKernelRootDetected
+                                    if (isElevated) {
+                                        viewModel.toggleQuick(context)
+                                    } else {
+                                        showGuidedAssistantDialog = true
+                                    }
+                                },
                                 onSelectMode = { mode ->
+                                    val isElevated = uiState.isDirectToggleGranted ||
+                                            uiState.bridgeState is BridgeConnectionState.Connected ||
+                                            uiState.terminalState.isAuthorized ||
+                                            uiState.isKernelRootDetected
                                     viewModel.selectChoice(mode)
-                                    viewModel.applySelectedSwitch(context)
+                                    if (isElevated) {
+                                        viewModel.applySelectedSwitch(context)
+                                    } else {
+                                        showGuidedAssistantDialog = true
+                                    }
                                 },
                                 onOpenRadioInfo = { viewModel.openRadioInfo(context) },
                                 onOpenSettings = { viewModel.openMobileSettings(context) },
@@ -188,7 +239,9 @@ fun MainScreen(
                                     viewModel.requestAddTileToControlPanel(false, context) { msg ->
                                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                     }
-                                }
+                                },
+                                onOpenAssistant = { showGuidedAssistantDialog = true },
+                                onNavigateToTerminal = { selectedTab = NavigationTab.TERMINAL }
                             )
                         }
                         NavigationTab.MACRO -> {
@@ -196,20 +249,20 @@ fun MainScreen(
                                 uiState = uiState,
                                 accentColor = primaryColor,
                                 onRunMacro = { mode -> viewModel.runModeMacro(mode) },
+                                onRunSpecificMacro = { macro ->
+                                    viewModel.runMacro(
+                                        macro = macro,
+                                        onPromptAddTile = {
+                                            viewModel.requestAddTileToControlPanel(true, context) {}
+                                        }
+                                    )
+                                },
+                                onCreateMacro = { showCreateMacroDialog = true },
+                                onDeleteMacro = viewModel::deleteMacro,
                                 onClearLogs = viewModel::clearMacroLogs,
                                 onOpenAccessibilitySettings = {
                                     MacroAccessibilityService.openAccessibilitySettings(context)
                                 }
-                            )
-                        }
-                        NavigationTab.TERMINAL -> {
-                            AdbTerminalScreen(
-                                uiState = uiState,
-                                onRequestPermission = viewModel::requestAdbPermission,
-                                onExecuteCommand = viewModel::executeAdbCommand,
-                                onGrantSecureSettings = viewModel::grantAdbSecureSettings,
-                                onClearLogs = viewModel::clearAdbLogs,
-                                onSetMode = viewModel::setNetworkModeViaAdb
                             )
                         }
                         NavigationTab.SETTINGS -> {
@@ -241,7 +294,7 @@ fun MainScreen(
             }
         }
 
-        // Floating Top Popup Alert (Shows on toggle failure or critical notices; DOES NOT CLOSE APP)
+        // Floating Top Notification Alert
         AnimatedVisibility(
             visible = uiState.popupMessage != null,
             enter = fadeIn() + slideInVertically(initialOffsetY = { -50 }),
@@ -261,7 +314,7 @@ fun MainScreen(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "âš ï¸", fontSize = 14.sp)
+                    Text(text = "⚠️", fontSize = 14.sp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = uiState.popupMessage ?: "",
@@ -281,6 +334,45 @@ fun MainScreen(
                 }
             }
         }
+
+        // Interactive Guided Switcher Dialog
+        if (showGuidedAssistantDialog) {
+            GuidedToggleAssistantDialog(
+                targetMode = uiState.selectedChoice,
+                onDismiss = { showGuidedAssistantDialog = false },
+                onRunAccessibilityMacro = {
+                    showGuidedAssistantDialog = false
+                    viewModel.runModeMacro(uiState.selectedChoice)
+                },
+                onOpenRadioInfo = {
+                    showGuidedAssistantDialog = false
+                    viewModel.openRadioInfo(context)
+                },
+                onOpenTerminalBridge = {
+                    showGuidedAssistantDialog = false
+                    selectedTab = NavigationTab.TERMINAL
+                }
+            )
+        }
+
+        // Create Custom Macro Dialog
+        if (showCreateMacroDialog) {
+            CreateCustomMacroDialog(
+                onDismiss = { showCreateMacroDialog = false },
+                onSave = { name, targetMode, autoReturnHome ->
+                    showCreateMacroDialog = false
+                    val steps = mutableListOf<MacroStep>()
+                    steps.add(MacroStep(actionType = MacroActionType.OPEN_NETWORK_SETTINGS, label = "Open Network & Internet"))
+                    steps.add(MacroStep(actionType = MacroActionType.WAIT_DELAY, label = "Wait for UI load", delaySeconds = 1))
+                    steps.add(MacroStep(actionType = MacroActionType.READ_SIM_SETTINGS, label = "Inspect SIM settings"))
+                    steps.add(MacroStep(actionType = if (targetMode == NetworkMode.FIVE_G) MacroActionType.SET_5G else MacroActionType.SET_4G, label = "Enforce ${targetMode.label()}"))
+                    if (autoReturnHome) {
+                        steps.add(MacroStep(actionType = MacroActionType.GO_HOME, label = "Return to Home Screen"))
+                    }
+                    viewModel.createCustomMacro(name, steps)
+                }
+            )
+        }
     }
 }
 
@@ -291,6 +383,7 @@ fun MainScreen(
 private fun MinimalTopBar(
     primaryColor: Color,
     is5G: Boolean,
+    isElevated: Boolean,
     onRefresh: () -> Unit
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -324,6 +417,22 @@ private fun MinimalTopBar(
                 color = Color.White,
                 letterSpacing = (-0.3).sp
             )
+            if (isElevated) {
+                Spacer(modifier = Modifier.width(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f))
+                ) {
+                    Text(
+                        text = "ELEVATED",
+                        color = Color(0xFF10B981),
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+            }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -412,7 +521,356 @@ private fun MinimalSegmentedNavBar(
 }
 
 // =====================================================================
-// SCREEN 1: âš¡ SWITCHER
+// SCREEN 1: 💻 STEP 1 - ON-DEVICE ADB & LINUX TERMINAL (FIRST SCREEN)
+// =====================================================================
+@Composable
+private fun AdbTerminalScreen(
+    uiState: MainScreenUiState,
+    onRequestPermission: () -> Unit,
+    onExecuteCommand: (String) -> Unit,
+    onGrantSecureSettings: () -> Unit,
+    onRevokeSecureSettings: () -> Unit,
+    onClearLogs: () -> Unit,
+    onSetMode: (NetworkMode) -> Unit,
+    onNavigateToToggle: () -> Unit
+) {
+    val termState = uiState.terminalState
+    var inputCmd by remember { mutableStateOf("") }
+    val isPermGranted = uiState.isDirectToggleGranted || termState.isPermissionGranted
+
+    // 1. STEP 1 INSTRUCTION BANNER
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF101624),
+        border = BorderStroke(1.dp, if (isPermGranted) Color(0xFF10B981).copy(alpha = 0.35f) else Color(0xFFF59E0B).copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = if (isPermGranted) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFFF59E0B).copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = "STEP 1: TERMINAL SETUP",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (isPermGranted) Color(0xFF10B981) else Color(0xFFF59E0B),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "ADB Authorization",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "On non-rooted Android phones, WRITE_SECURE_SETTINGS permission allows this app to toggle between 4G and 5G directly. Use the two commands below to grant or revoke it anytime.",
+                fontSize = 10.sp,
+                color = Color.White.copy(alpha = 0.7f),
+                lineHeight = 14.sp
+            )
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // 2. LIVE PERMISSION STATUS CARD
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = if (isPermGranted) Color(0xFF10B981).copy(alpha = 0.08f) else Color(0xFFEF4444).copy(alpha = 0.08f),
+        border = BorderStroke(1.dp, if (isPermGranted) Color(0xFF10B981).copy(alpha = 0.35f) else Color(0xFFEF4444).copy(alpha = 0.35f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (isPermGranted) Color(0xFF10B981) else Color(0xFFEF4444))
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isPermGranted) "PERMISSION ACTIVE (WRITE_SECURE_SETTINGS)" else "PERMISSION REQUIRED (WRITE_SECURE_SETTINGS)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = if (isPermGranted) Color(0xFF10B981) else Color(0xFFEF4444),
+                    letterSpacing = 0.4.sp
+                )
+                Text(
+                    text = if (isPermGranted) "Modem is fully authorized to switch 4G/5G in the background" else "Tap 'GRANT' below or run command 'grant' in the terminal",
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    // 3. THE TWO PRIMARY PERMISSION COMMAND BUTTONS (GRANT & REVOKE)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        // GRANT BUTTON
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF10B981),
+            modifier = Modifier
+                .weight(1f)
+                .height(46.dp)
+                .clickable { onGrantSecureSettings() }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.FlashOn, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Column {
+                    Text("GRANT PERMISSION", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                    Text("Command: grant", fontSize = 8.sp, color = Color.Black.copy(alpha = 0.7f), fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+
+        // REVOKE BUTTON
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFFEF4444).copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.5f)),
+            modifier = Modifier
+                .weight(1f)
+                .height(46.dp)
+                .clickable { onRevokeSecureSettings() }
+        ) {
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.FlashOff, contentDescription = null, tint = Color(0xFFEF4444), modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Column {
+                    Text("REVOKE PERMISSION", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color(0xFFEF4444))
+                    Text("Command: revoke", fontSize = 8.sp, color = Color.White.copy(alpha = 0.5f), fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // Quick Command Chips Bar (1-Click execution!)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        val quickChips = listOf(
+            "grant",
+            "revoke",
+            "5g",
+            "4g",
+            "whoami",
+            "status",
+            "devices",
+            "net",
+            "battery",
+            "props",
+            "bridge",
+            "ping",
+            "clear"
+        )
+        quickChips.forEach { chip ->
+            val isGrantChip = chip == "grant"
+            val isRevokeChip = chip == "revoke"
+            val chipColor = when {
+                isGrantChip -> Color(0xFF10B981)
+                isRevokeChip -> Color(0xFFEF4444)
+                else -> Color(0xFF38BDF8)
+            }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = chipColor.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, chipColor.copy(alpha = 0.35f)),
+                modifier = Modifier.clickable {
+                    if (chip == "clear") onClearLogs()
+                    else onExecuteCommand(chip)
+                }
+            ) {
+                Text(
+                    text = chip,
+                    color = chipColor,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // 4. Interactive Terminal Window (Monospace Console)
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF050811),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Terminal, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(13.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "INTERACTIVE SHELL CONSOLE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                }
+                Text(
+                    text = "CLEAR",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.clickable { onClearLogs() }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val scrollState = rememberScrollState()
+            LaunchedEffect(termState.logs.size) {
+                scrollState.animateScrollTo(scrollState.maxValue)
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .verticalScroll(scrollState)
+            ) {
+                if (termState.logs.isEmpty()) {
+                    Text(
+                        text = "$ Ready for shell commands.\nTap 'GRANT' or 'REVOKE' above, or type any command.",
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = Color.White.copy(alpha = 0.4f)
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        termState.logs.forEach { line ->
+                            val color = when (line.type) {
+                                TerminalLineType.COMMAND -> Color(0xFFF59E0B)
+                                TerminalLineType.OUTPUT -> Color(0xFF38BDF8)
+                                TerminalLineType.ERROR -> Color(0xFFEF4444)
+                                TerminalLineType.SYSTEM -> Color(0xFF10B981)
+                            }
+                            Text(
+                                text = line.text,
+                                fontSize = 9.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = color
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // 5. Command Input Line
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        OutlinedTextField(
+            value = inputCmd,
+            onValueChange = { inputCmd = it },
+            placeholder = { Text("Type command (e.g. grant, revoke, 5g, 4g, whoami)...", fontSize = 10.sp, color = Color.White.copy(alpha = 0.4f)) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFFF59E0B),
+                unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White
+            )
+        )
+
+        IconButton(
+            onClick = {
+                if (inputCmd.isNotBlank()) {
+                    onExecuteCommand(inputCmd)
+                    inputCmd = ""
+                }
+            },
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFFF59E0B))
+        ) {
+            Icon(Icons.Default.Send, contentDescription = "Run", tint = Color.Black, modifier = Modifier.size(16.dp))
+        }
+    }
+
+    Spacer(modifier = Modifier.height(14.dp))
+
+    // 6. PROCEED TO TOGGLE SCREEN BUTTON (STEP 2)
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF0F172A),
+        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onNavigateToToggle() }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(
+                    text = "STEP 2: TOGGLE 4G / 5G",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF38BDF8)
+                )
+                Text(
+                    text = if (isPermGranted) "Permission is ready! Tap to switch modes" else "Go to toggle screen (or test via Macro)",
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.6f)
+                )
+            }
+            Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(18.dp))
+        }
+    }
+
+    Spacer(modifier = Modifier.height(20.dp))
+}
+
+// =====================================================================
+// SCREEN 2: ⚡ STEP 2 - SWITCHER (TOGGLE HERO)
 // =====================================================================
 @Composable
 private fun SwitcherScreen(
@@ -425,41 +883,61 @@ private fun SwitcherScreen(
     onOpenRadioInfo: () -> Unit,
     onOpenSettings: () -> Unit,
     onDismissStatus: () -> Unit,
-    onRequestAddTile: () -> Unit
+    onRequestAddTile: () -> Unit,
+    onOpenAssistant: () -> Unit,
+    onNavigateToTerminal: () -> Unit
 ) {
-    // 1. Permission Reminder (Subtle)
-    if (!uiState.hasPermission) {
+    val infiniteTransition = rememberInfiniteTransition(label = "radarPulse")
+    val radarScale by infiniteTransition.animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.05f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "radarScale"
+    )
+
+    // 1. Permission Warning Banner if not granted yet
+    if (!uiState.isDirectToggleGranted) {
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF1E293B).copy(alpha = 0.8f),
-            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.3f)),
+            color = Color(0xFFF59E0B).copy(alpha = 0.12f),
+            border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.4f)),
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onRequestPhonePermission() }
+                .clickable { onNavigateToTerminal() }
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Security, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(15.dp))
+                Text(text = "⚠️", fontSize = 14.sp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Grant Telephony Permission for live 5G/4G hardware detection",
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 10.sp,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(text = "GRANT", color = Color(0xFF38BDF8), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Terminal Authorization Recommended",
+                        color = Color(0xFFF59E0B),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Grant WRITE_SECURE_SETTINGS in Terminal for 100% background toggle",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 9.sp
+                    )
+                }
+                Text(text = "SETUP (STEP 1)", color = Color(0xFFF59E0B), fontSize = 10.sp, fontWeight = FontWeight.Black)
             }
         }
         Spacer(modifier = Modifier.height(12.dp))
     }
 
-    // 2. Tactile Hero Status Card
+    // 2. High-End Neo-Glow Hero Radar Card
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color.Transparent,
-        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.25f)),
+        border = BorderStroke(1.dp, primaryColor.copy(alpha = 0.3f)),
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onToggleQuick() }
@@ -468,72 +946,114 @@ private fun SwitcherScreen(
             modifier = Modifier
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(Color(0xFF131B2E), Color(0xFF0D1322))
+                        colors = listOf(Color(0xFF111827), Color(0xFF090D16))
                     )
                 )
-                .padding(20.dp)
+                .padding(22.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Live Carrier & RAT Chip
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.05f))
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .background(Color.White.copy(alpha = 0.06f))
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
                 ) {
-                    Icon(Icons.Default.SignalCellularAlt, contentDescription = null, tint = primaryColor, modifier = Modifier.size(13.dp))
+                    Icon(Icons.Default.SignalCellularAlt, contentDescription = null, tint = primaryColor, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = uiState.liveNetwork.displayName,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White.copy(alpha = 0.9f)
                     )
+                }
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                // Pulsing Radar Circle & RAT Badge
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(120.dp)
+                ) {
+                    // Outer pulsing glow ring
+                    Box(
+                        modifier = Modifier
+                            .size(115.dp)
+                            .scale(radarScale)
+                            .clip(CircleShape)
+                            .background(primaryColor.copy(alpha = 0.08f))
+                    )
+                    // Inner ring
+                    Box(
+                        modifier = Modifier
+                            .size(90.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF050811))
+                            .border(BorderStroke(2.dp, primaryColor.copy(alpha = 0.45f)), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = if (is5G) "5G" else "4G",
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.Black,
+                                color = primaryColor,
+                                letterSpacing = (-1).sp
+                            )
+                            Text(
+                                text = if (is5G) "NR STANDALONE" else "LTE ADVANCED",
+                                fontSize = 7.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.White.copy(alpha = 0.6f),
+                                letterSpacing = 0.4.sp
+                            )
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = if (is5G) "5G NR" else "4G LTE",
-                    fontSize = 42.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color.White,
-                    letterSpacing = (-1).sp
+                    text = if (is5G) "High-Speed 5G Active" else "Battery-Saver 4G Active",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
 
                 Text(
-                    text = if (is5G) "High-Speed 5G Standalone Active" else "Standard 4G LTE Battery-Saver Active",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
+                    text = if (is5G) "Gigabit carrier aggregation operational" else "Optimized for maximum battery endurance",
+                    fontSize = 10.sp,
                     color = Color.White.copy(alpha = 0.5f)
                 )
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Single primary switch button
+                // Large Tactile Switch Button
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = primaryColor,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(46.dp)
+                        .height(48.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.FlashOn, contentDescription = null, tint = Color.Black, modifier = Modifier.size(17.dp))
+                        Icon(Icons.Default.FlashOn, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (is5G) "TAP TO SWITCH TO 4G LTE" else "TAP TO SWITCH TO 5G NR",
+                            text = if (is5G) "SWITCH TO 4G LTE" else "SWITCH TO 5G NR",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.Black,
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.6.sp
                         )
                     }
                 }
@@ -563,7 +1083,7 @@ private fun SwitcherScreen(
                             CircularProgressIndicator(modifier = Modifier.size(13.dp), color = Color(0xFFF59E0B), strokeWidth = 2.dp)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Applying ${s.targetMode.label()} switch (${s.remainingSeconds}s)â€¦",
+                                text = "Applying ${s.targetMode.label()} switch (${s.remainingSeconds}s)…",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFFF59E0B)
@@ -615,11 +1135,11 @@ private fun SwitcherScreen(
                                 modifier = Modifier.weight(1f)
                             )
                             Text(
-                                text = "FORCE (*#*#4636#*#*)",
+                                text = "OPEN ASSISTANT",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFF38BDF8),
-                                modifier = Modifier.clickable { onOpenRadioInfo() }
+                                modifier = Modifier.clickable { onOpenAssistant() }
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             IconButton(onClick = onDismissStatus, modifier = Modifier.size(20.dp)) {
@@ -635,7 +1155,7 @@ private fun SwitcherScreen(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // 4. Clean 3-Way Mode Selector
+    // 4. 3-Way Mode Selector Bar
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = Color(0xFF101624),
@@ -647,9 +1167,9 @@ private fun SwitcherScreen(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             val modes = listOf(
-                Triple(NetworkMode.FIVE_G, "5G NR", "âš¡"),
-                Triple(NetworkMode.AUTO, "Auto", "ðŸ”„"),
-                Triple(NetworkMode.FOUR_G, "4G LTE", "ðŸ“¶")
+                Triple(NetworkMode.FIVE_G, "5G NR", "⚡"),
+                Triple(NetworkMode.AUTO, "Auto", "🔄"),
+                Triple(NetworkMode.FOUR_G, "4G LTE", "📶")
             )
             modes.forEach { (mode, label, icon) ->
                 val isSelected = uiState.selectedChoice == mode
@@ -681,36 +1201,54 @@ private fun SwitcherScreen(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // 5. Clear, Helpful Instructions Box
+    // 5. Intelligent Guided Switcher Assistant Banner
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = Color(0xFF0F172A),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.06f)),
-        modifier = Modifier.fillMaxWidth()
+        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.2f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenAssistant() }
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF38BDF8).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Speed, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Smart Guided Switch Assistant",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                Text(
+                    text = "Works on 100% of devices via Auto-Macro, Radio Menu, or Privileged Bridge",
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.55f)
+                )
+            }
             Text(
-                text = "ðŸ’¡ HOW TOGGLING WORKS ON ANDROID",
+                text = "OPTIONS",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF38BDF8),
-                letterSpacing = 0.5.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "â€¢ 1-Click Background Toggle: Works automatically if elevated permission is granted via Shizuku, ADB, or Root.\n" +
-                        "â€¢ Universal Force Menu: Tap 'Force Menu' below to set 'NR only' or 'LTE only' directly in Android's hardware radio menu.\n" +
-                        "â€¢ On-Device Terminal: Switch to the ADB Terminal tab above to grant permission directly on your phone without a PC.",
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.65f),
-                lineHeight = 15.sp
+                color = Color(0xFF38BDF8)
             )
         }
     }
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // 6. Minimal Quick Tools (3 essential buttons)
+    // 6. Minimal Quick Tools
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -786,51 +1324,24 @@ private fun MinimalToolCard(
 }
 
 // =====================================================================
-// SCREEN 2: ðŸª„ MACRO (STREAMLINED & FIXED)
+// SCREEN 3: 🪄 MACRO (STREAMLINED & INTERACTIVE)
 // =====================================================================
 @Composable
 private fun MacroScreen(
     uiState: MainScreenUiState,
     accentColor: Color,
     onRunMacro: (NetworkMode) -> Unit,
+    onRunSpecificMacro: (RecordedMacro) -> Unit,
+    onCreateMacro: () -> Unit,
+    onDeleteMacro: (String) -> Unit,
     onClearLogs: () -> Unit,
     onOpenAccessibilitySettings: () -> Unit
 ) {
     val context = LocalContext.current
-    val isAdbAuthorized = uiState.terminalState.isAuthorized || uiState.isDirectToggleGranted
+    val isBridgeConnected = uiState.bridgeState is BridgeConnectionState.Connected
+    val isAdbAuthorized = uiState.terminalState.isAuthorized || uiState.isDirectToggleGranted || isBridgeConnected
     val isAccessibilityActive = MacroAccessibilityService.isAccessibilityEnabled(context)
     val isRunning = uiState.macroState is MacroExecutionState.Running
-
-    var targetMacroMode by remember { mutableStateOf(NetworkMode.FIVE_G) }
-
-    // Instructions Box
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF101624),
-        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = "ðŸª„ AUTOMATED NETWORK MACRO",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFF38BDF8),
-                letterSpacing = 0.5.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Executes complete network mode enforcement in 1 tap without manual interaction.\n" +
-                        "â€¢ If ADB/Shizuku permission is active: Mode switches instantly in the background (0ms delay).\n" +
-                        "â€¢ If Accessibility is enabled: Automatically navigates Settings and taps Preferred Network Type for you.",
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.7f),
-                lineHeight = 15.sp
-            )
-        }
-    }
-
-    Spacer(modifier = Modifier.height(14.dp))
 
     // Engine Status Indicator
     Surface(
@@ -843,14 +1354,15 @@ private fun MacroScreen(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(text = if (isAdbAuthorized) "âš¡" else if (isAccessibilityActive) "ðŸ‘†" else "âš ï¸", fontSize = 13.sp)
+            Text(text = if (isBridgeConnected) "🟢" else if (isAdbAuthorized) "⚡" else if (isAccessibilityActive) "👆" else "⚠️", fontSize = 13.sp)
             Spacer(modifier = Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = when {
+                        isBridgeConnected -> "Privileged System Server Proxy Active"
                         isAdbAuthorized -> "Direct Shell Engine Active"
                         isAccessibilityActive -> "Accessibility Tap Engine Active"
-                        else -> "Permission Setup Required"
+                        else -> "Accessibility Permission Required"
                     },
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -858,9 +1370,10 @@ private fun MacroScreen(
                 )
                 Text(
                     text = when {
-                        isAdbAuthorized -> "Instant background frequency switching operational"
+                        isBridgeConnected -> "Instant 0ms background switching via daemon IPC"
+                        isAdbAuthorized -> "Instant background frequency switching ready"
                         isAccessibilityActive -> "Automated touch gesture navigation active"
-                        else -> "Enable Accessibility or authorize ADB Terminal to automate"
+                        else -> "Enable Accessibility to automate Settings navigation"
                     },
                     fontSize = 9.sp,
                     color = Color.White.copy(alpha = 0.55f)
@@ -880,60 +1393,107 @@ private fun MacroScreen(
 
     Spacer(modifier = Modifier.height(14.dp))
 
-    // Mode Selector (5G vs 4G)
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF101624),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-        modifier = Modifier.fillMaxWidth()
+    // Header & Create Macro Button
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        Text(
+            text = "SAVED MACROS & RECIPES",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White.copy(alpha = 0.5f),
+            letterSpacing = 0.6.sp
+        )
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = accentColor.copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.35f)),
+            modifier = Modifier.clickable { onCreateMacro() }
         ) {
-            listOf(NetworkMode.FIVE_G to "Enforce 5G NR", NetworkMode.FOUR_G to "Enforce 4G LTE").forEach { (mode, label) ->
-                val isSelected = targetMacroMode == mode
-                Surface(
-                    shape = RoundedCornerShape(11.dp),
-                    color = if (isSelected) accentColor else Color.Transparent,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { targetMacroMode = mode }
-                ) {
-                    Text(
-                        text = label,
-                        fontSize = 11.sp,
-                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.SemiBold,
-                        color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(vertical = 10.dp)
-                    )
-                }
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, tint = accentColor, modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = "NEW MACRO", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = accentColor)
             }
         }
     }
 
-    Spacer(modifier = Modifier.height(14.dp))
+    Spacer(modifier = Modifier.height(8.dp))
 
-    // Large Primary "RUN MACRO" Action Button
-    Button(
-        onClick = { onRunMacro(targetMacroMode) },
-        enabled = !isRunning,
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(48.dp)
+    // Saved Macros List
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = if (isRunning) "MACRO EXECUTINGâ€¦" else "RUN ${targetMacroMode.label().uppercase()} MACRO",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Black,
-            color = Color.Black,
-            letterSpacing = 0.4.sp
-        )
+        uiState.savedMacros.forEach { macro ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF101624),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(accentColor.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (macro.name.contains("5G", ignoreCase = true)) "⚡" else "📶",
+                            fontSize = 15.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = macro.name,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "${macro.steps.size} steps • ${macro.steps.firstOrNull()?.label ?: "Ready"}",
+                            fontSize = 9.sp,
+                            color = Color.White.copy(alpha = 0.5f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onRunSpecificMacro(macro) },
+                        enabled = !isRunning,
+                        colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(30.dp)
+                    ) {
+                        Text("RUN", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    }
+                    if (uiState.savedMacros.size > 2) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { onDeleteMacro(macro.id) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.White.copy(alpha = 0.4f), modifier = Modifier.size(13.dp))
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Spacer(modifier = Modifier.height(14.dp))
@@ -953,7 +1513,7 @@ private fun MacroScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = "â–¶ EXECUTING: ${runState.stepLabel}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                    Text(text = "▶ EXECUTING: ${runState.stepLabel}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
                     Text(text = "${(runState.progress * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
                 }
                 Spacer(modifier = Modifier.height(6.dp))
@@ -999,7 +1559,7 @@ private fun MacroScreen(
             ) {
                 if (uiState.macroLogs.isEmpty()) {
                     Text(
-                        text = "Ready. Tap 'RUN MACRO' to execute.",
+                        text = "Ready. Tap 'RUN' on any recipe to execute.",
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
                         color = Color.White.copy(alpha = 0.4f)
@@ -1024,269 +1584,7 @@ private fun MacroScreen(
 }
 
 // =====================================================================
-// SCREEN 3: ðŸ’» ON-DEVICE ADB TERMINAL
-// =====================================================================
-@Composable
-private fun AdbTerminalScreen(
-    uiState: MainScreenUiState,
-    onRequestPermission: () -> Unit,
-    onExecuteCommand: (String) -> Unit,
-    onGrantSecureSettings: () -> Unit,
-    onClearLogs: () -> Unit,
-    onSetMode: (NetworkMode) -> Unit
-) {
-    val termState = uiState.terminalState
-    var inputCmd by remember { mutableStateOf("") }
-
-    // Instructions Box
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFF101624),
-        border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Text(
-                text = "ðŸ’» ON-DEVICE ADB TERMINAL",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Black,
-                color = Color(0xFFF59E0B),
-                letterSpacing = 0.5.sp
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Run privileged shell commands directly on this device without needing a computer.\n" +
-                        "1. Wireless Debugging / Shizuku: Tap 'Grant Permission' below to authorize the terminal.\n" +
-                        "2. Once granted, execute network mode bitmasks, telephony tests, or custom ADB commands.",
-                fontSize = 10.sp,
-                color = Color.White.copy(alpha = 0.7f),
-                lineHeight = 15.sp
-            )
-        }
-    }
-
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Terminal Authorization Status Card
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = if (termState.isAuthorized) Color(0xFF10B981).copy(alpha = 0.08f) else Color(0xFFF59E0B).copy(alpha = 0.08f),
-        border = BorderStroke(1.dp, if (termState.isAuthorized) Color(0xFF10B981).copy(alpha = 0.25f) else Color(0xFFF59E0B).copy(alpha = 0.25f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(if (termState.isAuthorized) Color(0xFF10B981) else Color(0xFFF59E0B))
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (termState.isAuthorized) "Terminal Authorized" else "Authorization Required",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (termState.isAuthorized) Color(0xFF10B981) else Color(0xFFF59E0B)
-                )
-                Text(
-                    text = termState.statusMessage,
-                    fontSize = 9.sp,
-                    color = Color.White.copy(alpha = 0.55f)
-                )
-            }
-            if (!termState.isAuthorized) {
-                Button(
-                    onClick = onRequestPermission,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF59E0B)),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("GRANT", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                }
-            }
-        }
-    }
-
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Interactive Terminal Window (Monospace Console)
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF050811),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Terminal, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(13.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "SHELL CONSOLE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
-                }
-                Text(
-                    text = "CLEAR",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.clickable { onClearLogs() }
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            val scrollState = rememberScrollState()
-            LaunchedEffect(termState.logs.size) {
-                scrollState.animateScrollTo(scrollState.maxValue)
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .verticalScroll(scrollState)
-            ) {
-                if (termState.logs.isEmpty()) {
-                    Text(
-                        text = "$ Ready for ADB commands.\nTap a quick action below or type any command.",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color.White.copy(alpha = 0.4f)
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        termState.logs.forEach { line ->
-                            val color = when (line.type) {
-                                TerminalLineType.COMMAND -> Color(0xFFF59E0B)
-                                TerminalLineType.OUTPUT -> Color(0xFF38BDF8)
-                                TerminalLineType.ERROR -> Color(0xFFEF4444)
-                                TerminalLineType.SYSTEM -> Color(0xFF10B981)
-                            }
-                            Text(
-                                text = line.text,
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = color
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Spacer(modifier = Modifier.height(10.dp))
-
-    // Command Input Line
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        OutlinedTextField(
-            value = inputCmd,
-            onValueChange = { inputCmd = it },
-            placeholder = { Text("Enter command (e.g. pm grant â€¦)", fontSize = 10.sp, color = Color.White.copy(alpha = 0.4f)) },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color(0xFFF59E0B),
-                unfocusedBorderColor = Color.White.copy(alpha = 0.15f),
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White
-            )
-        )
-
-        IconButton(
-            onClick = {
-                if (inputCmd.isNotBlank()) {
-                    onExecuteCommand(inputCmd)
-                    inputCmd = ""
-                }
-            },
-            modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xFFF59E0B))
-        ) {
-            Icon(Icons.Default.Send, contentDescription = "Run", tint = Color.Black, modifier = Modifier.size(16.dp))
-        }
-    }
-
-    Spacer(modifier = Modifier.height(12.dp))
-
-    // Essential 1-Tap Quick Action Buttons (Minimal & Purposeful)
-    Text(
-        text = "QUICK ACTIONS",
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Bold,
-        color = Color.White.copy(alpha = 0.5f),
-        letterSpacing = 0.6.sp
-    )
-
-    Spacer(modifier = Modifier.height(6.dp))
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        QuickActionButton(
-            label = "Grant Secure Settings",
-            onClick = onGrantSecureSettings,
-            modifier = Modifier.weight(1f)
-        )
-        QuickActionButton(
-            label = "Force 5G NR",
-            onClick = { onSetMode(NetworkMode.FIVE_G) },
-            modifier = Modifier.weight(1f)
-        )
-        QuickActionButton(
-            label = "Force 4G LTE",
-            onClick = { onSetMode(NetworkMode.FOUR_G) },
-            modifier = Modifier.weight(1f)
-        )
-    }
-
-    Spacer(modifier = Modifier.height(20.dp))
-}
-
-@Composable
-private fun QuickActionButton(
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = Color(0xFF101624),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
-        modifier = modifier
-            .height(38.dp)
-            .clickable { onClick() }
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = label,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-        }
-    }
-}
-
-// =====================================================================
-// SCREEN 4: âš™ï¸ SETTINGS & PERMISSIONS HUB
+// SCREEN 4: ⚙️ SETTINGS & CONTROL PANEL
 // =====================================================================
 @Composable
 private fun SettingsScreen(
@@ -1319,7 +1617,7 @@ private fun SettingsScreen(
     )
 
     val bridgeState = uiState.bridgeState
-    val isBridgeConnected = bridgeState is com.example.networktoggle.bridge.BridgeConnectionState.Connected
+    val isBridgeConnected = bridgeState is BridgeConnectionState.Connected
     val bridgeStatusColor = if (isBridgeConnected) Color(0xFF10B981) else Color(0xFFF59E0B)
 
     Surface(
@@ -1343,7 +1641,7 @@ private fun SettingsScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (isBridgeConnected) {
-                            val conn = bridgeState as com.example.networktoggle.bridge.BridgeConnectionState.Connected
+                            val conn = bridgeState as BridgeConnectionState.Connected
                             val identity = if (conn.isRoot) "Root (UID 0)" else "ADB Shell (UID ${conn.uid})"
                             "Bridge Active • $identity"
                         } else {
@@ -1355,7 +1653,7 @@ private fun SettingsScreen(
                     )
                     Text(
                         text = if (isBridgeConnected) {
-                            val conn = bridgeState as com.example.networktoggle.bridge.BridgeConnectionState.Connected
+                            val conn = bridgeState as BridgeConnectionState.Connected
                             "Process PID: ${conn.pid} • Binder IPC connected"
                         } else {
                             "Runs directly on device with ADB shell (UID 2000) or Root (UID 0)"
@@ -1427,7 +1725,7 @@ private fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            val pcCmd = com.example.networktoggle.bridge.PrivilegedBridgeManager.getAdbPcCommand(context)
+            val pcCmd = PrivilegedBridgeManager.getAdbPcCommand(context)
             Surface(
                 shape = RoundedCornerShape(10.dp),
                 color = Color(0xFF070A12),
@@ -1480,10 +1778,9 @@ private fun SettingsScreen(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            // 1. Telephony Permission
             PermissionStatusRow(
                 title = "Telephony Hardware Access",
-                subtitle = if (uiState.hasPermission) "Granted â€¢ Live 5G/4G radio telemetry operational" else "Action needed â€¢ Required for live network reading",
+                subtitle = if (uiState.hasPermission) "Granted • Live 5G/4G radio telemetry operational" else "Action needed • Required for live network reading",
                 isGranted = uiState.hasPermission,
                 actionLabel = if (!uiState.hasPermission) "GRANT" else null,
                 onAction = onRequestPhonePermission
@@ -1491,10 +1788,9 @@ private fun SettingsScreen(
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
 
-            // 2. On-Device ADB / Shizuku
             PermissionStatusRow(
                 title = "On-Device ADB (Shizuku)",
-                subtitle = if (isAdbAuthorized) "Authorized â€¢ Instant background frequency switching ready" else "Not authorized â€¢ Enables direct 1-tap mode toggles",
+                subtitle = if (isAdbAuthorized) "Authorized • Instant background frequency switching ready" else "Not authorized • Enables direct 1-tap mode toggles",
                 isGranted = isAdbAuthorized,
                 actionLabel = if (!isAdbAuthorized) "AUTHORIZE" else null,
                 onAction = onRequestAdbPermission
@@ -1502,10 +1798,9 @@ private fun SettingsScreen(
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
 
-            // 3. Accessibility Automation
             PermissionStatusRow(
                 title = "Accessibility Automation",
-                subtitle = if (isAccessibilityActive) "Active â€¢ Automated touch navigation & SIM clicks ready" else "Inactive â€¢ Automates Settings navigation without ADB",
+                subtitle = if (isAccessibilityActive) "Active • Automated touch navigation & SIM clicks ready" else "Inactive • Automates Settings navigation without ADB",
                 isGranted = isAccessibilityActive,
                 actionLabel = if (!isAccessibilityActive) "ENABLE" else null,
                 onAction = onOpenAccessibilitySettings
@@ -1513,10 +1808,9 @@ private fun SettingsScreen(
 
             HorizontalDivider(color = Color.White.copy(alpha = 0.06f))
 
-            // 4. Kernel Root Access
             PermissionStatusRow(
-                title = "Kernel Root (SU)",
-                subtitle = if (uiState.isKernelRootDetected) "Detected â€¢ Elevated SU shell command execution available" else "Not detected â€¢ Standard secure Android sandbox active",
+                title = "Kernel Root Access",
+                subtitle = if (uiState.isKernelRootDetected) "Detected • Elevated SU shell command execution available" else "Not detected • Standard secure Android sandbox active",
                 isGranted = uiState.isKernelRootDetected,
                 actionLabel = null,
                 onAction = {}
@@ -1579,7 +1873,7 @@ private fun SettingsScreen(
             modifier = Modifier.weight(1f).clickable { onOpenRadioInfo() }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(text = "ðŸ”§ Force Radio Menu", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "🔧 Force Radio Menu", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Text(text = "*#*#4636#*#* Testing activity", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
             }
         }
@@ -1590,7 +1884,7 @@ private fun SettingsScreen(
             modifier = Modifier.weight(1f).clickable { onOpenMobileSettings() }
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(text = "ðŸŒ SIMs & Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(text = "🌐 SIMs & Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                 Text(text = "System operator settings", fontSize = 9.sp, color = Color.White.copy(alpha = 0.5f))
             }
         }
@@ -1598,7 +1892,7 @@ private fun SettingsScreen(
 
     Spacer(modifier = Modifier.height(16.dp))
 
-    // Section 4: One-time PC ADB Command
+    // Section 4: Manual PC ADB Command
     Text(
         text = "MANUAL PC ADB COMMAND",
         fontSize = 11.sp,
@@ -1720,6 +2014,263 @@ private fun TileOptionRow(
             modifier = Modifier.height(28.dp)
         ) {
             Text(buttonText, color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black)
+        }
+    }
+}
+
+// =====================================================================
+// GUIDED TOGGLE ASSISTANT MODAL (FOR GUARANTEED NON-ROOT FUNCTIONALITY)
+// =====================================================================
+@Composable
+private fun GuidedToggleAssistantDialog(
+    targetMode: NetworkMode,
+    onDismiss: () -> Unit,
+    onRunAccessibilityMacro: () -> Unit,
+    onOpenRadioInfo: () -> Unit,
+    onOpenTerminalBridge: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF0F172A),
+            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f)),
+            shadowElevation = 16.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "⚡ Switch to ${targetMode.label()}",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color.White
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(16.dp))
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "Select your preferred method to apply this network mode change on your device:",
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.65f),
+                    lineHeight = 15.sp
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Option 1: Automated Accessibility Macro
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onRunAccessibilityMacro() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "🪄", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Automated Touch Macro", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                            Text(text = "Automatically taps Settings -> SIMs -> Preferred Network without root or ADB", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Option 2: Force Radio Menu
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenRadioInfo() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "🔧", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Force Radio Menu (*#*#4636#*#*)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                            Text(text = "Directly set NR only or LTE only in Android phone testing", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Option 3: Terminal & Privileged Bridge
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFF1E293B),
+                    border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.3f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenTerminalBridge() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "💻", fontSize = 20.sp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Terminal (Step 1 Permission Setup)", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                            Text(text = "Run 'grant' via Shizuku / ADB for permanent 0ms silent background switching", fontSize = 9.sp, color = Color.White.copy(alpha = 0.6f))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.1f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                ) {
+                    Text("CANCEL", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+// =====================================================================
+// CREATE CUSTOM MACRO DIALOG
+// =====================================================================
+@Composable
+private fun CreateCustomMacroDialog(
+    onDismiss: () -> Unit,
+    onSave: (String, NetworkMode, Boolean) -> Unit
+) {
+    var macroName by remember { mutableStateOf("Quick Network Switch") }
+    var selectedTarget by remember { mutableStateOf(NetworkMode.FIVE_G) }
+    var returnToHome by remember { mutableStateOf(true) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = Color(0xFF0F172A),
+            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f)),
+            shadowElevation = 16.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Text(
+                    text = "🪄 Create Custom Macro",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = macroName,
+                    onValueChange = { macroName = it },
+                    label = { Text("Macro Name", fontSize = 10.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF10B981),
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Text(
+                    text = "TARGET NETWORK MODE",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(NetworkMode.FIVE_G to "5G NR", NetworkMode.FOUR_G to "4G LTE").forEach { (mode, label) ->
+                        val isSel = selectedTarget == mode
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSel) Color(0xFF10B981) else Color(0xFF1E293B),
+                            modifier = Modifier.weight(1f).clickable { selectedTarget = mode }
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSel) FontWeight.Black else FontWeight.SemiBold,
+                                color = if (isSel) Color.Black else Color.White,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(
+                        checked = returnToHome,
+                        onCheckedChange = { returnToHome = it },
+                        colors = CheckboxDefaults.colors(checkedColor = Color(0xFF10B981))
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Auto-minimize & return to Home when complete",
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.1f)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Text("CANCEL", color = Color.White.copy(alpha = 0.8f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = { onSave(macroName, selectedTarget, returnToHome) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f).height(38.dp)
+                    ) {
+                        Text("SAVE MACRO", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+            }
         }
     }
 }

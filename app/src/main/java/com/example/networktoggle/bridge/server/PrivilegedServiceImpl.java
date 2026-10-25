@@ -127,6 +127,17 @@ public class PrivilegedServiceImpl extends IPrivilegedService.Stub {
     }
 
     @Override
+    public boolean revokeRuntimePermission(String token, String packageName, String permission) {
+        enforceAuthorized(token);
+        try {
+            java.lang.Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "pm revoke " + packageName + " " + permission});
+            return p.waitFor() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @Override
     public void exit(String token) {
         enforceAuthorized(token);
         new Thread(() -> {

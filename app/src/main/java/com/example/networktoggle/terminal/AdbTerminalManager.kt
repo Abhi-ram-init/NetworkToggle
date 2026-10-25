@@ -1,9 +1,13 @@
 package com.example.networktoggle.terminal
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.core.content.ContextCompat
+import com.example.networktoggle.bridge.BridgeConnectionState
+import com.example.networktoggle.bridge.PrivilegedBridgeManager
 import com.example.networktoggle.network.NetworkMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +25,7 @@ import java.util.Date
 import java.util.Locale
 
 enum class AdbEngine {
+    PRIVILEGED_BRIDGE,
     SHIZUKU,
     ROOT,
     LOCAL_SHELL,
@@ -44,11 +49,13 @@ data class TerminalLine(
 data class AdbTerminalState(
     val engine: AdbEngine = AdbEngine.NONE,
     val isAuthorized: Boolean = false,
+    val isPermissionGranted: Boolean = false,
     val isShizukuRunning: Boolean = false,
     val isRootAvailable: Boolean = false,
+    val isBridgeConnected: Boolean = false,
     val isExecuting: Boolean = false,
     val logs: List<TerminalLine> = emptyList(),
-    val statusMessage: String = "Initializing ADB TerminalÃ¢â‚¬Â¦"
+    val statusMessage: String = "Initializing ADB Terminal…"
 )
 
 class AdbTerminalManager(
@@ -71,8 +78,8 @@ class AdbTerminalManager(
         if (requestCode == SHIZUKU_REQUEST_CODE) {
             val isGranted = grantResult == PackageManager.PERMISSION_GRANTED
             appendLine(
-                if (isGranted) "Ã¢Å“â€ Shizuku permission granted! Terminal authorized."
-                else "Ã¢â€žÂ¹Ã¯Â¸Â Shizuku permission request was dismissed.",
+                if (isGranted) "✔ Shizuku permission granted! Elevated ADB shell active."
+                else "ℹ Shizuku permission request was dismissed.",
                 TerminalLineType.SYSTEM
             )
             refreshState()
@@ -80,12 +87,12 @@ class AdbTerminalManager(
     }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
-        appendLine("Ã¢Å¡Â¡ Shizuku service connected on device.", TerminalLineType.SYSTEM)
+        appendLine("⚡ Shizuku binder connected on device.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
     private val binderDeadListener = Shizuku.OnBinderDeadListener {
-        appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku service disconnected.", TerminalLineType.SYSTEM)
+        appendLine("ℹ Shizuku service disconnected.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
@@ -96,7 +103,21 @@ class AdbTerminalManager(
             Shizuku.addRequestPermissionResultListener(permissionListener)
         } catch (_: Exception) {}
 
-        appendLine("ADB Terminal Initialized. Type 'help' for available commands.", TerminalLineType.SYSTEM)
+        // Listen for Privileged Bridge connection changes
+        scope.launch {
+            PrivilegedBridgeManager.state.collect { bridgeState ->
+                val isConnected = bridgeState is BridgeConnectionState.Connected
+                if (isConnected) {
+                    val uid = PrivilegedBridgeManager.connectedUid
+                    val pid = PrivilegedBridgeManager.connectedPid
+                    val identity = if (uid == 0) "Root (UID 0)" else "ADB Shell (UID $uid)"
+                    appendLine("🟢 Privileged Backend Service attached ($identity, PID: $pid).", TerminalLineType.SYSTEM)
+                }
+                refreshState()
+            }
+        }
+
+        appendLine("Linux & ADB Terminal initialized. Use 'grant' or 'revoke' to manage toggle permissions.", TerminalLineType.SYSTEM)
         refreshState()
     }
 
@@ -110,33 +131,47 @@ class AdbTerminalManager(
 
     fun refreshState() {
         scope.launch(Dispatchers.IO) {
+            val isBridgeConnected = PrivilegedBridgeManager.isConnected
             val shizukuRunning = try { Shizuku.pingBinder() } catch (_: Exception) { false }
             val shizukuGranted = shizukuRunning && try {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             } catch (_: Exception) { false }
 
             val rootAvailable = checkRootAvailable()
+            val permissionGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_SECURE_SETTINGS
+            ) == PackageManager.PERMISSION_GRANTED
 
             val engine = when {
+                isBridgeConnected -> AdbEngine.PRIVILEGED_BRIDGE
                 shizukuGranted -> AdbEngine.SHIZUKU
                 rootAvailable -> AdbEngine.ROOT
                 else -> AdbEngine.LOCAL_SHELL
             }
 
-            val authorized = shizukuGranted || rootAvailable
+            val authorized = isBridgeConnected || shizukuGranted || rootAvailable
             val statusMsg = when {
-                shizukuGranted -> "Ã°Å¸Å¸Â¢ Authorized via Shizuku (On-Device ADB Active)"
-                rootAvailable -> "Ã°Å¸Å¸Â¢ Authorized via Kernel Root"
-                shizukuRunning -> "Ã°Å¸Å¸Â¡ Shizuku Active Ã¢â‚¬Â¢ Tap 'Grant' to authorize"
-                else -> "Ã¢Å¡Âª Ready (Standard & Built-in commands supported)"
+                permissionGranted -> "🟢 Permission Active • WRITE_SECURE_SETTINGS Granted"
+                isBridgeConnected -> {
+                    val uid = PrivilegedBridgeManager.connectedUid
+                    val identity = if (uid == 0) "Root (UID 0)" else "ADB Shell (UID $uid)"
+                    "🟢 Authorized via Privileged Bridge ($identity)"
+                }
+                shizukuGranted -> "🟢 Authorized via Shizuku (ADB Shell UID 2000)"
+                rootAvailable -> "🟢 Authorized via Kernel Root (UID 0)"
+                shizukuRunning -> "🟡 Shizuku Active • Tap 'GRANT' to authorize"
+                else -> "⚡ Local Shell Active (Run 'grant' to authorize app)"
             }
 
             _state.update {
                 it.copy(
                     engine = engine,
                     isAuthorized = authorized,
+                    isPermissionGranted = permissionGranted,
                     isShizukuRunning = shizukuRunning,
                     isRootAvailable = rootAvailable,
+                    isBridgeConnected = isBridgeConnected,
                     statusMessage = statusMsg
                 )
             }
@@ -175,41 +210,40 @@ class AdbTerminalManager(
 
     fun requestPermission() {
         scope.launch(Dispatchers.IO) {
+            if (PrivilegedBridgeManager.isConnected) {
+                appendLine("✔ Already authorized via Privileged Backend Service (UID ${PrivilegedBridgeManager.connectedUid}).", TerminalLineType.SYSTEM)
+                grantWriteSecureSettings()
+                return@launch
+            }
+
             val shizukuRunning = try { Shizuku.pingBinder() } catch (_: Exception) { false }
             if (shizukuRunning) {
                 try {
                     if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                        appendLine("Ã¢Å“â€ Permission already granted via Shizuku.", TerminalLineType.SYSTEM)
-                        refreshState()
+                        appendLine("✔ Shizuku authorized. Granting WRITE_SECURE_SETTINGS…", TerminalLineType.SYSTEM)
+                        grantWriteSecureSettings()
                     } else {
-                        appendLine("Prompting Shizuku authorization dialog on phoneÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
+                        appendLine("Prompting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
                         Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
                     }
                 } catch (e: Exception) {
-                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku prompt notice: ${e.message}", TerminalLineType.SYSTEM)
+                    appendLine("ℹ Shizuku prompt notice: ${e.message}", TerminalLineType.SYSTEM)
                 }
             } else if (checkRootAvailable()) {
-                appendLine("Checking Root authorization on deviceÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
-                try {
-                    val proc = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-                    proc.waitFor()
-                    appendLine("Ã¢Å“â€ Root permission confirmed.", TerminalLineType.SYSTEM)
-                    refreshState()
-                } catch (e: Exception) {
-                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Root check notice: ${e.message}", TerminalLineType.SYSTEM)
-                }
+                appendLine("Root available. Granting WRITE_SECURE_SETTINGS…", TerminalLineType.SYSTEM)
+                grantWriteSecureSettings()
             } else {
                 if (isShizukuInstalled()) {
-                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku app is installed on phone, but service is not running.", TerminalLineType.SYSTEM)
-                    appendLine("Ã°Å¸â€˜â€° Open Shizuku, tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
+                    appendLine("ℹ Shizuku app is installed on phone, but service is not running.", TerminalLineType.SYSTEM)
+                    appendLine("👉 Open Shizuku, tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
                     withContext(Dispatchers.Main) {
                         launchShizukuApp()
                     }
                 } else {
-                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku is not running on this phone.", TerminalLineType.SYSTEM)
-                    appendLine("Ã°Å¸â€™Â¡ Option 1: Install Shizuku & start it via Wireless Debugging (No PC needed).", TerminalLineType.SYSTEM)
-                    appendLine("Ã°Å¸â€™Â¡ Option 2: Run once via PC: adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS", TerminalLineType.SYSTEM)
-                    appendLine("Ã°Å¸â€™Â¡ Option 3: Use the 'Toggle' or 'Macro' tab which works via Accessibility without any ADB.", TerminalLineType.SYSTEM)
+                    appendLine("ℹ No elevated engine active yet.", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 1: Install Shizuku & start it via Wireless Debugging (No PC needed).", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 2: Run via PC ADB: adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS", TerminalLineType.SYSTEM)
+                    appendLine("💡 Option 3: Start Privileged Bridge: Type 'bridge start' in terminal.", TerminalLineType.SYSTEM)
                 }
             }
         }
@@ -227,18 +261,41 @@ class AdbTerminalManager(
             }
             "help" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                appendLine("=== ADB TERMINAL HELP & COMMANDS ===", TerminalLineType.SYSTEM)
-                appendLine("  help      : Display this list of commands", TerminalLineType.OUTPUT)
-                appendLine("  status    : Inspect terminal & elevation engine status", TerminalLineType.OUTPUT)
-                appendLine("  ping      : Test shell responsiveness", TerminalLineType.OUTPUT)
-                appendLine("  5g        : Enforce 5G NR network mode", TerminalLineType.OUTPUT)
-                appendLine("  4g        : Enforce 4G LTE network mode", TerminalLineType.OUTPUT)
-                appendLine("  auto      : Set dynamic 5G/4G multi-mode", TerminalLineType.OUTPUT)
-                appendLine("  grant     : Request WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
-                appendLine("  devices   : Show current connected engine status", TerminalLineType.OUTPUT)
-                appendLine("  bridge    : Manage Privileged Backend Service (app_process daemon)", TerminalLineType.OUTPUT)
-                appendLine("  clear     : Clear terminal console output", TerminalLineType.OUTPUT)
-                appendLine("  You can also type standard shell commands (e.g. getprop, id, date)", TerminalLineType.OUTPUT)
+                appendLine("=== ADB & LINUX INTERACTIVE SHELL ===", TerminalLineType.SYSTEM)
+                appendLine("Permission Control (Core):", TerminalLineType.OUTPUT)
+                appendLine("  grant       : Grant WRITE_SECURE_SETTINGS permission for 4G/5G toggling", TerminalLineType.OUTPUT)
+                appendLine("  revoke      : Revoke / remove WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
+                appendLine("Core Commands:", TerminalLineType.OUTPUT)
+                appendLine("  help        : Display this command reference", TerminalLineType.OUTPUT)
+                appendLine("  whoami / id : Print UID, GID, identity & active engine", TerminalLineType.OUTPUT)
+                appendLine("  status      : Show permission & engine elevation status", TerminalLineType.OUTPUT)
+                appendLine("  devices     : Show attached local ADB daemon status", TerminalLineType.OUTPUT)
+                appendLine("  ping        : Test shell responsiveness", TerminalLineType.OUTPUT)
+                appendLine("  clear       : Clear console logs", TerminalLineType.OUTPUT)
+                appendLine("Cellular & Modem Control:", TerminalLineType.OUTPUT)
+                appendLine("  5g          : Enforce 5G NR network mode", TerminalLineType.OUTPUT)
+                appendLine("  4g          : Enforce 4G LTE network mode", TerminalLineType.OUTPUT)
+                appendLine("  auto        : Set dynamic 5G/4G multi-mode", TerminalLineType.OUTPUT)
+                appendLine("System Diagnostics:", TerminalLineType.OUTPUT)
+                appendLine("  net / ip    : Show active network interfaces & IP routing", TerminalLineType.OUTPUT)
+                appendLine("  battery     : Show battery level, status, temperature & health", TerminalLineType.OUTPUT)
+                appendLine("  props       : Show key cellular and build properties", TerminalLineType.OUTPUT)
+                appendLine("Privileged Bridge:", TerminalLineType.OUTPUT)
+                appendLine("  bridge      : Inspect Privileged Backend Service (app_process daemon)", TerminalLineType.OUTPUT)
+                appendLine("  bridge start: Launch the app_process background daemon", TerminalLineType.OUTPUT)
+                appendLine("  bridge stop : Stop the background daemon via Binder IPC", TerminalLineType.OUTPUT)
+                appendLine("Native Shell:", TerminalLineType.OUTPUT)
+                appendLine("  Type any Linux command (e.g. getprop, ip a, pm list packages, uname -a, date)", TerminalLineType.OUTPUT)
+                return
+            }
+            "grant", "grant-permission", "enable-permission", "enable" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                grantWriteSecureSettings()
+                return
+            }
+            "revoke", "revoke-permission", "remove-permission", "remove", "disable-permission", "disable" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                revokeWriteSecureSettings()
                 return
             }
             "ping" -> {
@@ -246,18 +303,42 @@ class AdbTerminalManager(
                 appendLine("✔ Pong! Active shell engine is responsive (${_state.value.engine.name}).", TerminalLineType.SYSTEM)
                 return
             }
+            "whoami", "id" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                val currentEngine = _state.value.engine
+                when (currentEngine) {
+                    AdbEngine.PRIVILEGED_BRIDGE -> {
+                        val uid = PrivilegedBridgeManager.connectedUid
+                        val pid = PrivilegedBridgeManager.connectedPid
+                        val name = if (uid == 0) "root" else "shell"
+                        appendLine("uid=$uid($name) gid=$uid($name) pid=$pid engine=PRIVILEGED_BRIDGE", TerminalLineType.OUTPUT)
+                    }
+                    AdbEngine.SHIZUKU -> {
+                        appendLine("uid=2000(shell) gid=2000(shell) groups=2000(shell) engine=SHIZUKU", TerminalLineType.OUTPUT)
+                    }
+                    AdbEngine.ROOT -> {
+                        appendLine("uid=0(root) gid=0(root) groups=0(root) engine=KERNEL_ROOT", TerminalLineType.OUTPUT)
+                    }
+                    else -> {
+                        runLocalFallback("id")
+                    }
+                }
+                return
+            }
             "status" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
                 appendLine("Engine: ${_state.value.engine.name}", TerminalLineType.OUTPUT)
                 appendLine("Authorized: ${_state.value.isAuthorized}", TerminalLineType.OUTPUT)
+                appendLine("Permission (WRITE_SECURE_SETTINGS): ${if (_state.value.isPermissionGranted) "GRANTED (Active)" else "REVOKED / MISSING"}", TerminalLineType.OUTPUT)
+                appendLine("Privileged Bridge: ${if (_state.value.isBridgeConnected) "CONNECTED (UID ${PrivilegedBridgeManager.connectedUid}, PID ${PrivilegedBridgeManager.connectedPid})" else "DISCONNECTED"}", TerminalLineType.OUTPUT)
                 appendLine("Shizuku Running: ${_state.value.isShizukuRunning}", TerminalLineType.OUTPUT)
                 appendLine("Root Available: ${_state.value.isRootAvailable}", TerminalLineType.OUTPUT)
-                appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})", TerminalLineType.OUTPUT)
+                appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})", TerminalLineType.OUTPUT)
                 return
             }
             "devices" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                val status = if (_state.value.isAuthorized) "device (authorized)" else "unauthorized"
+                val status = if (_state.value.isAuthorized) "device (authorized)" else "device (local shell)"
                 appendLine("List of devices attached:", TerminalLineType.OUTPUT)
                 appendLine("localhost:5555\t$status [${_state.value.engine.name}]", TerminalLineType.OUTPUT)
                 return
@@ -277,93 +358,126 @@ class AdbTerminalManager(
                 setNetworkModeViaAdb(NetworkMode.AUTO)
                 return
             }
+            "net", "ip" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                executePipeline("ip -brief address 2>/dev/null || ifconfig 2>/dev/null || ip addr")
+                return
+            }
+            "battery" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                executePipeline("dumpsys battery 2>/dev/null || cat /sys/class/power_supply/battery/capacity 2>/dev/null || echo 'Battery telemetry unavailable'")
+                return
+            }
+            "props" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                executePipeline("getprop | grep -E \"(gsm\\.|ro\\.build\\.|ro\\.product\\.)\" | head -n 30")
+                return
+            }
             "bridge" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                val isConn = com.example.networktoggle.bridge.PrivilegedBridgeManager.isConnected
+                val isConn = PrivilegedBridgeManager.isConnected
                 if (isConn) {
-                    val uid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedUid
-                    val pid = com.example.networktoggle.bridge.PrivilegedBridgeManager.connectedPid
+                    val uid = PrivilegedBridgeManager.connectedUid
+                    val pid = PrivilegedBridgeManager.connectedPid
                     val identity = if (uid == 0) "Root UID 0" else "ADB Shell UID $uid"
-                    appendLine("ðŸŸ¢ Privileged Backend Service is ACTIVE ($identity, PID: $pid).", TerminalLineType.SYSTEM)
-                    appendLine("   Binder IPC is connected to Android System Server.", TerminalLineType.OUTPUT)
+                    appendLine("🟢 Privileged Backend Service is ACTIVE ($identity, PID: $pid).", TerminalLineType.SYSTEM)
+                    appendLine("   Binder IPC is connected directly to Android System Server proxy.", TerminalLineType.OUTPUT)
+                    appendLine("   Type '5g' or '4g' for instant background frequency switching.", TerminalLineType.OUTPUT)
                 } else {
-                    appendLine("âšª Privileged Backend Service is INACTIVE.", TerminalLineType.OUTPUT)
+                    appendLine("⚪ Privileged Backend Service is INACTIVE.", TerminalLineType.OUTPUT)
                     appendLine("   Type 'bridge start' to launch the background app_process daemon.", TerminalLineType.OUTPUT)
+                    appendLine("   Or copy the 1-line PC command from Settings tab.", TerminalLineType.OUTPUT)
                 }
                 return
             }
             "bridge start" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                appendLine("âš¡ Launching Privileged Backend Service via app_process...", TerminalLineType.SYSTEM)
-                val cmd = com.example.networktoggle.bridge.PrivilegedBridgeManager.getLaunchCommand(context)
+                appendLine("⚡ Launching Privileged Backend Service via app_process…", TerminalLineType.SYSTEM)
+                val cmd = PrivilegedBridgeManager.getLaunchCommand(context)
                 executeCommand(cmd)
                 return
             }
             "bridge stop" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                val stopped = com.example.networktoggle.bridge.PrivilegedBridgeManager.stopService()
+                val stopped = PrivilegedBridgeManager.stopService()
                 if (stopped) {
-                    appendLine("ðŸ›‘ Privileged Backend Service stopped.", TerminalLineType.SYSTEM)
+                    appendLine("🛑 Privileged Backend Service stopped.", TerminalLineType.SYSTEM)
                 } else {
-                    appendLine("â„¹ï¸ Privileged Backend Service was not running.", TerminalLineType.OUTPUT)
+                    appendLine("ℹ Privileged Backend Service was not running.", TerminalLineType.OUTPUT)
                 }
                 return
             }
-            "grant" -> {
-                appendLine("$ $trimmed", TerminalLineType.COMMAND)
-                grantWriteSecureSettings()
-                return
-            }
         }
 
-        // 2. Intercept privileged commands gracefully if not authorized yet
-        val isPrivileged = trimmed.startsWith("pm grant", ignoreCase = true) ||
-                trimmed.startsWith("pm revoke", ignoreCase = true) ||
-                trimmed.startsWith("cmd phone", ignoreCase = true) ||
-                trimmed.startsWith("settings put", ignoreCase = true) ||
-                trimmed.startsWith("svc ", ignoreCase = true) ||
-                trimmed.startsWith("su ", ignoreCase = true)
+        // 2. Full-fledged shell execution pipeline
+        executePipeline(trimmed)
+    }
 
-        if (isPrivileged && !_state.value.isAuthorized) {
-            appendLine("$ $trimmed", TerminalLineType.COMMAND)
-            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Elevated ADB privileges are required for system command: $trimmed", TerminalLineType.SYSTEM)
-            if (_state.value.isShizukuRunning) {
-                appendLine("Ã°Å¸â€˜â€° Shizuku is active! Tap 'GRANT' above to authorize this terminal.", TerminalLineType.SYSTEM)
-                requestPermission()
-            } else {
-                appendLine("Ã°Å¸â€˜â€° Option A: Tap 'GRANT' above to start Shizuku (Wireless Debugging, No PC).", TerminalLineType.SYSTEM)
-                appendLine("Ã°Å¸â€˜â€° Option B: Run via PC: adb shell $trimmed", TerminalLineType.SYSTEM)
-                appendLine("Ã°Å¸â€˜â€° Option C: Use the 'Toggle' or 'Macro' tab which works via Accessibility without ADB.", TerminalLineType.SYSTEM)
+    private fun runLocalFallback(cmd: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val proc = Runtime.getRuntime().exec(arrayOf("sh", "-c", cmd))
+                val reader = BufferedReader(InputStreamReader(proc.inputStream))
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    appendLine(line ?: "", TerminalLineType.OUTPUT)
+                }
+                proc.waitFor()
+            } catch (e: Exception) {
+                appendLine("Notice: ${e.message}", TerminalLineType.OUTPUT)
             }
-            return
         }
+    }
 
-        // 3. Resilient execution pipeline with automatic cascading fallback
+    private fun executePipeline(trimmed: String) {
         scope.launch(Dispatchers.IO) {
             _state.update { it.copy(isExecuting = true) }
             appendLine("$ $trimmed", TerminalLineType.COMMAND)
 
             try {
                 val currentEngine = _state.value.engine
-                var process: Process? = null
 
-                // Attempt Shizuku if authorized
+                // 1. Privileged Bridge Execution (UID 2000 or UID 0)
+                if (currentEngine == AdbEngine.PRIVILEGED_BRIDGE && PrivilegedBridgeManager.isConnected) {
+                    val (exitCode, outputLines) = PrivilegedBridgeManager.executeCommand(trimmed)
+                    var hasOutput = false
+                    for (line in outputLines) {
+                        hasOutput = true
+                        if (line.startsWith("[ERR]")) {
+                            appendLine(line.removePrefix("[ERR] ").trim(), TerminalLineType.ERROR)
+                        } else {
+                            appendLine(line, TerminalLineType.OUTPUT)
+                        }
+                    }
+                    if (exitCode == 0) {
+                        if (!hasOutput) {
+                            appendLine("✔ Command executed successfully via Privileged Bridge.", TerminalLineType.SYSTEM)
+                        }
+                    } else {
+                        appendLine("ℹ Command finished with exit code $exitCode", TerminalLineType.SYSTEM)
+                    }
+                    refreshState()
+                    return@launch
+                }
+
+                // 2. Shizuku Execution (UID 2000)
+                var process: Process? = null
                 if (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning) {
                     try {
                         process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
                     } catch (e: Exception) {
-                        appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Shizuku notice: ${e.message}. Using fallback engineÃ¢â‚¬Â¦", TerminalLineType.SYSTEM)
+                        appendLine("ℹ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
                     }
                 }
 
-                // Attempt Root if available
+                // 3. Kernel Root Execution (UID 0)
                 if (process == null && (currentEngine == AdbEngine.ROOT || _state.value.isRootAvailable)) {
                     try {
                         process = Runtime.getRuntime().exec(arrayOf("su", "-c", trimmed))
                     } catch (_: Exception) {}
                 }
 
-                // Fallback to local shell
+                // 4. Local Shell Execution (Native Android Linux Shell)
                 if (process == null) {
                     process = Runtime.getRuntime().exec(arrayOf("sh", "-c", trimmed))
                 }
@@ -383,7 +497,7 @@ class AdbTerminalManager(
                 var hasError = false
                 while (stdErrReader.readLine().also { errLine = it } != null) {
                     hasError = true
-                    appendLine(errLine ?: "", TerminalLineType.OUTPUT)
+                    appendLine(errLine ?: "", TerminalLineType.ERROR)
                 }
 
                 val exitCode = try {
@@ -394,15 +508,23 @@ class AdbTerminalManager(
 
                 if (exitCode == 0) {
                     if (!hasOutput && !hasError) {
-                        appendLine("Ã¢Å“â€ Command executed successfully.", TerminalLineType.SYSTEM)
+                        appendLine("✔ Command executed successfully.", TerminalLineType.SYSTEM)
                     }
                 } else {
-                    appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Command completed (code $exitCode)", TerminalLineType.SYSTEM)
+                    appendLine("ℹ Command finished with exit code $exitCode", TerminalLineType.SYSTEM)
+                    val isPrivileged = trimmed.startsWith("pm grant", ignoreCase = true) ||
+                            trimmed.startsWith("pm revoke", ignoreCase = true) ||
+                            trimmed.startsWith("cmd phone", ignoreCase = true) ||
+                            trimmed.startsWith("settings put", ignoreCase = true)
+                    if (isPrivileged && !_state.value.isAuthorized) {
+                        appendLine("💡 Tip: Tap 'GRANT PERMISSION' or run 'bridge start' to elevate terminal privileges.", TerminalLineType.SYSTEM)
+                    }
                 }
             } catch (e: Exception) {
-                appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
+                appendLine("ℹ Execution notice: ${e.localizedMessage ?: e.message}", TerminalLineType.SYSTEM)
             } finally {
                 _state.update { it.copy(isExecuting = false) }
+                refreshState()
             }
         }
     }
@@ -423,6 +545,11 @@ class AdbTerminalManager(
      */
     suspend fun executeSilent(cmd: String): Boolean = withContext(Dispatchers.IO) {
         return@withContext try {
+            if (PrivilegedBridgeManager.isConnected) {
+                val (exitCode, _) = PrivilegedBridgeManager.executeCommand(cmd)
+                return@withContext exitCode == 0
+            }
+
             val process: Process = when {
                 _state.value.engine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning ->
                     spawnShizukuProcess(arrayOf("sh", "-c", cmd))
@@ -444,14 +571,62 @@ class AdbTerminalManager(
     fun grantWriteSecureSettings() {
         val pkg = context.packageName
         val cmd = "pm grant $pkg android.permission.WRITE_SECURE_SETTINGS"
-        if (_state.value.isAuthorized) {
-            executeCommand(cmd)
-            appendLine("Ã¢Å“â€ WRITE_SECURE_SETTINGS command dispatched.", TerminalLineType.SYSTEM)
-        } else {
-            appendLine("$ $cmd", TerminalLineType.COMMAND)
-            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â To grant WRITE_SECURE_SETTINGS without a PC:", TerminalLineType.SYSTEM)
-            appendLine("  1. Tap 'GRANT' above if you have Shizuku / Wireless Debugging running.", TerminalLineType.SYSTEM)
-            appendLine("  2. Or if using a PC terminal, run: adb shell $cmd", TerminalLineType.SYSTEM)
+
+        scope.launch(Dispatchers.IO) {
+            if (PrivilegedBridgeManager.isConnected) {
+                val ok = PrivilegedBridgeManager.grantWriteSecureSettings(context)
+                if (ok) {
+                    appendLine("✔ WRITE_SECURE_SETTINGS granted via Privileged Bridge System Server!", TerminalLineType.SYSTEM)
+                    appendLine("🟢 4G/5G toggle is now fully enabled! Tap 'Toggle' tab or type '5g'/'4g'.", TerminalLineType.SYSTEM)
+                } else {
+                    executeCommand(cmd)
+                }
+                refreshState()
+            } else if (_state.value.isAuthorized) {
+                executeCommand(cmd)
+                appendLine("✔ WRITE_SECURE_SETTINGS grant command dispatched via elevated shell.", TerminalLineType.SYSTEM)
+                appendLine("🟢 4G/5G toggle is now enabled!", TerminalLineType.SYSTEM)
+                refreshState()
+            } else {
+                appendLine("$ $cmd", TerminalLineType.COMMAND)
+                appendLine("ℹ Attempting local shell dispatch: $cmd", TerminalLineType.SYSTEM)
+                executePipeline(cmd)
+                appendLine("💡 To grant on this phone without a PC:", TerminalLineType.SYSTEM)
+                appendLine("  1. Tap 'GRANT' above if you have Shizuku or Wireless Debugging active.", TerminalLineType.SYSTEM)
+                appendLine("  2. Or if connected to a PC, run: adb shell $cmd", TerminalLineType.SYSTEM)
+                appendLine("  3. Or launch Privileged Bridge: Type 'bridge start' in this terminal.", TerminalLineType.SYSTEM)
+            }
+        }
+    }
+
+    /**
+     * 1-Tap shortcut to revoke WRITE_SECURE_SETTINGS from the application!
+     */
+    fun revokeWriteSecureSettings() {
+        val pkg = context.packageName
+        val cmd = "pm revoke $pkg android.permission.WRITE_SECURE_SETTINGS"
+
+        scope.launch(Dispatchers.IO) {
+            if (PrivilegedBridgeManager.isConnected) {
+                val ok = PrivilegedBridgeManager.revokeWriteSecureSettings(context)
+                if (ok) {
+                    appendLine("🛑 WRITE_SECURE_SETTINGS permission has been REVOKED via Privileged Bridge.", TerminalLineType.SYSTEM)
+                    appendLine("ℹ Background 4G/5G switching disabled. Run 'grant' to enable it again.", TerminalLineType.SYSTEM)
+                } else {
+                    executeCommand(cmd)
+                }
+                refreshState()
+            } else if (_state.value.isAuthorized) {
+                executeCommand(cmd)
+                appendLine("🛑 WRITE_SECURE_SETTINGS revoke command dispatched via elevated shell.", TerminalLineType.SYSTEM)
+                appendLine("ℹ Permission disabled. Run 'grant' to re-enable.", TerminalLineType.SYSTEM)
+                refreshState()
+            } else {
+                appendLine("$ $cmd", TerminalLineType.COMMAND)
+                appendLine("ℹ Attempting local shell dispatch: $cmd", TerminalLineType.SYSTEM)
+                executePipeline(cmd)
+                appendLine("💡 To revoke via PC: adb shell $cmd", TerminalLineType.SYSTEM)
+            }
         }
     }
 
@@ -470,28 +645,39 @@ class AdbTerminalManager(
             NetworkMode.FOUR_G -> GLOBAL_MODE_4G
         }
 
-        if (_state.value.isAuthorized) {
+        if (PrivilegedBridgeManager.isConnected) {
+            scope.launch {
+                val ok = PrivilegedBridgeManager.setNetworkMode(mode)
+                if (ok) {
+                    appendLine("✔ Network switched to ${mode.label()} via Privileged Bridge System Server proxy.", TerminalLineType.SYSTEM)
+                } else {
+                    executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
+                    executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
+                    executeCommand("settings put global preferred_network_mode $modeVal")
+                }
+            }
+        } else if (_state.value.isAuthorized) {
             executeCommand("cmd phone set-allowed-network-types-for-reason 0 0 $bitmask")
             executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
             executeCommand("settings put global preferred_network_mode $modeVal")
-            appendLine("Ã¢Å“â€ Network mode applied via ADB telephony service.", TerminalLineType.SYSTEM)
+            appendLine("✔ Network mode commands dispatched via elevated shell.", TerminalLineType.SYSTEM)
         } else {
-            appendLine("Ã¢â€žÂ¹Ã¯Â¸Â Elevated terminal authorization required to switch modem via ADB.", TerminalLineType.SYSTEM)
-            appendLine("Ã°Å¸â€˜â€° Use the 'Toggle' or 'Macro' tab to switch automatically without ADB, or tap 'GRANT' above.", TerminalLineType.SYSTEM)
+            appendLine("ℹ Running in Local Shell mode. Dispatching telephony switch…", TerminalLineType.SYSTEM)
+            executeCommand("cmd phone set-preferred-network-type 0 $modeVal")
+            appendLine("💡 Tip: Run 'grant' to authorize WRITE_SECURE_SETTINGS, or use the 'Macro' tab via Accessibility.", TerminalLineType.SYSTEM)
         }
     }
 
     fun clearLogs() {
         _state.update { it.copy(logs = emptyList()) }
-        appendLine("Terminal cleared.", TerminalLineType.SYSTEM)
+        appendLine("Terminal console cleared.", TerminalLineType.SYSTEM)
     }
 
     private fun appendLine(text: String, type: TerminalLineType) {
         _state.update { current ->
             val updated = current.logs + TerminalLine(text = text, type = type)
-            val trimmed = if (updated.size > 200) updated.takeLast(200) else updated
+            val trimmed = if (updated.size > 250) updated.takeLast(250) else updated
             current.copy(logs = trimmed)
         }
     }
 }
-
