@@ -55,7 +55,10 @@ data class AdbTerminalState(
     val isBridgeConnected: Boolean = false,
     val isExecuting: Boolean = false,
     val logs: List<TerminalLine> = emptyList(),
-    val statusMessage: String = "Initializing ADB Terminal…"
+    val statusMessage: String = "Initializing ADB Terminal…",
+    val kernelReport: KernelSecurityReport? = null,
+    val isKernelHardened: Boolean = false,
+    val kernelShieldText: String = "Auditing Kernel Security…"
 )
 
 class AdbTerminalManager(
@@ -118,6 +121,16 @@ class AdbTerminalManager(
         }
 
         appendLine("Linux & ADB Terminal initialized. Use 'grant' or 'revoke' to manage toggle permissions.", TerminalLineType.SYSTEM)
+
+        // Asynchronously audit and log kernel security baseline
+        scope.launch(Dispatchers.IO) {
+            val report = KernelSecurityAuditor.audit()
+            val secDesc = if (report.seccomp.mode == 2) "Seccomp BPF Active" else "Seccomp Active"
+            val selinuxDesc = if (report.selinux.isEnforcing) "SELinux Enforcing" else "SELinux Permissive"
+            val rsaDesc = if (report.secureBoot.isRsaAuthEnforced) "RSA Auth Active" else "RSA Open"
+            appendLine("🛡️ Kernel Security: $secDesc | $selinuxDesc | $rsaDesc (Type 'kernel' for full audit)", TerminalLineType.SYSTEM)
+        }
+
         refreshState()
     }
 
@@ -164,6 +177,13 @@ class AdbTerminalManager(
                 else -> "⚡ Local Shell Active (Run 'grant' to authorize app)"
             }
 
+            val kernelReport = KernelSecurityAuditor.audit()
+            val shieldText = when {
+                kernelReport.isHardened -> "🛡️ Kernel Hardened (${kernelReport.securityScore}%) • Seccomp BPF • SELinux Enforcing"
+                kernelReport.selinux.isEnforcing -> "🛡️ Kernel Protected • SELinux Enforcing • RSA Secured"
+                else -> "🛡️ Kernel Standard Sandboxing Active"
+            }
+
             _state.update {
                 it.copy(
                     engine = engine,
@@ -172,7 +192,10 @@ class AdbTerminalManager(
                     isShizukuRunning = shizukuRunning,
                     isRootAvailable = rootAvailable,
                     isBridgeConnected = isBridgeConnected,
-                    statusMessage = statusMsg
+                    statusMessage = statusMsg,
+                    kernelReport = kernelReport,
+                    isKernelHardened = kernelReport.isHardened,
+                    kernelShieldText = shieldText
                 )
             }
         }
@@ -265,6 +288,9 @@ class AdbTerminalManager(
                 appendLine("Permission Control (Core):", TerminalLineType.OUTPUT)
                 appendLine("  grant       : Grant WRITE_SECURE_SETTINGS permission for 4G/5G toggling", TerminalLineType.OUTPUT)
                 appendLine("  revoke      : Revoke / remove WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
+                appendLine("Kernel & Security Hardening:", TerminalLineType.OUTPUT)
+                appendLine("  kernel      : Audit 5 kernel security pillars (Seccomp BPF, SELinux, Namespaces, FFS, Secure Boot)", TerminalLineType.OUTPUT)
+                appendLine("  kconfig     : Inspect kernel config & attack surface reduction flags", TerminalLineType.OUTPUT)
                 appendLine("Core Commands:", TerminalLineType.OUTPUT)
                 appendLine("  help        : Display this command reference", TerminalLineType.OUTPUT)
                 appendLine("  whoami / id : Print UID, GID, identity & active engine", TerminalLineType.OUTPUT)
@@ -296,6 +322,17 @@ class AdbTerminalManager(
             "revoke", "revoke-permission", "remove-permission", "remove", "disable-permission", "disable" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
                 revokeWriteSecureSettings()
+                return
+            }
+            "kernel", "kconfig", "kernel-audit", "audit", "security" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                scope.launch(Dispatchers.IO) {
+                    val report = KernelSecurityAuditor.audit()
+                    val lines = KernelSecurityAuditor.formatTerminalAudit(report)
+                    for (line in lines) {
+                        appendLine(line, TerminalLineType.OUTPUT)
+                    }
+                }
                 return
             }
             "ping" -> {
@@ -330,6 +367,11 @@ class AdbTerminalManager(
                 appendLine("Engine: ${_state.value.engine.name}", TerminalLineType.OUTPUT)
                 appendLine("Authorized: ${_state.value.isAuthorized}", TerminalLineType.OUTPUT)
                 appendLine("Permission (WRITE_SECURE_SETTINGS): ${if (_state.value.isPermissionGranted) "GRANTED (Active)" else "REVOKED / MISSING"}", TerminalLineType.OUTPUT)
+                val report = _state.value.kernelReport ?: KernelSecurityAuditor.audit()
+                appendLine("Kernel Hardening: ${report.securityScore}% (${if (report.isHardened) "HARDENED & SECURE" else "STANDARD RESTRICTIONS"})", TerminalLineType.OUTPUT)
+                appendLine("Kernel Seccomp: ${report.seccomp.modeDescription}", TerminalLineType.OUTPUT)
+                appendLine("Kernel SELinux: ${if (report.selinux.isEnforcing) "Enforcing" else "Permissive"} (${report.selinux.selinuxContext})", TerminalLineType.OUTPUT)
+                appendLine("Secure Boot: ro.secure=${report.secureBoot.roSecure}, ro.adb.secure=${report.secureBoot.roAdbSecure}", TerminalLineType.OUTPUT)
                 appendLine("Privileged Bridge: ${if (_state.value.isBridgeConnected) "CONNECTED (UID ${PrivilegedBridgeManager.connectedUid}, PID ${PrivilegedBridgeManager.connectedPid})" else "DISCONNECTED"}", TerminalLineType.OUTPUT)
                 appendLine("Shizuku Running: ${_state.value.isShizukuRunning}", TerminalLineType.OUTPUT)
                 appendLine("Root Available: ${_state.value.isRootAvailable}", TerminalLineType.OUTPUT)

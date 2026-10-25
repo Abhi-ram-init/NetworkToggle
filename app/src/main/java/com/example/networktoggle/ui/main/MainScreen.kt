@@ -1135,6 +1135,57 @@ private fun AdbTerminalScreen(
         }
     }
 
+    Spacer(modifier = Modifier.height(10.dp))
+
+    // 1.5. Kernel Security Shield Banner
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF0B132B).copy(alpha = 0.85f),
+        border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.35f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onExecuteCommand("kernel") }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Security,
+                contentDescription = null,
+                tint = Color(0xFF38BDF8),
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "KERNEL HARDENING & SECURE ADB",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF38BDF8),
+                    letterSpacing = 0.5.sp
+                )
+                Text(
+                    text = termState.kernelShieldText,
+                    fontSize = 9.sp,
+                    color = Color.White.copy(alpha = 0.75f)
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = Color(0xFF38BDF8).copy(alpha = 0.15f)
+            ) {
+                Text(
+                    text = "AUDIT",
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF38BDF8),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+    }
+
     Spacer(modifier = Modifier.height(12.dp))
 
     // 2. The Two Primary Command Buttons (Grant & Revoke)
@@ -1202,6 +1253,8 @@ private fun AdbTerminalScreen(
         val quickChips = listOf(
             "grant",
             "revoke",
+            "kernel",
+            "kconfig",
             "5g",
             "4g",
             "whoami",
@@ -1217,10 +1270,12 @@ private fun AdbTerminalScreen(
         quickChips.forEach { chip ->
             val isGrantChip = chip == "grant"
             val isRevokeChip = chip == "revoke"
+            val isKernelChip = chip == "kernel" || chip == "kconfig"
             val chipColor = when {
                 isGrantChip -> Color(0xFF10B981)
                 isRevokeChip -> Color(0xFFEF4444)
-                else -> Color(0xFF38BDF8)
+                isKernelChip -> Color(0xFF38BDF8)
+                else -> Color(0xFF94A3B8)
             }
             Surface(
                 shape = RoundedCornerShape(10.dp),
