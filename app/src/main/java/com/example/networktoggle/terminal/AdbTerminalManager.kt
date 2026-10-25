@@ -58,7 +58,10 @@ data class AdbTerminalState(
     val statusMessage: String = "Initializing ADB Terminal…",
     val kernelReport: KernelSecurityReport? = null,
     val isKernelHardened: Boolean = false,
-    val kernelShieldText: String = "Auditing Kernel Security…"
+    val kernelShieldText: String = "Auditing Kernel Security…",
+    val shizukuVersion: Int = 0,
+    val shizukuUid: Int = -1,
+    val shizukuSeLinux: String = ""
 )
 
 class AdbTerminalManager(
@@ -152,6 +155,7 @@ class AdbTerminalManager(
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             } catch (_: Exception) { false }
             val shizukuUid = if (shizukuGranted) try { Shizuku.getUid() } catch (_: Exception) { 2000 } else -1
+            val shizukuSeLinux = if (shizukuGranted) try { Shizuku.getSELinuxContext() } catch (_: Exception) { "" } else ""
 
             val rootAvailable = checkRootAvailable()
             val permissionGranted = ContextCompat.checkSelfPermission(
@@ -201,8 +205,75 @@ class AdbTerminalManager(
                     statusMessage = statusMsg,
                     kernelReport = kernelReport,
                     isKernelHardened = kernelReport.isHardened,
-                    kernelShieldText = shieldText
+                    kernelShieldText = shieldText,
+                    shizukuVersion = shizukuVersion,
+                    shizukuUid = shizukuUid,
+                    shizukuSeLinux = shizukuSeLinux
                 )
+            }
+        }
+    }
+
+    /**
+     * Connects to the Shizuku server via the API, binds listeners, checks server status,
+     * verifies authorization, and prompts the permission dialog if needed.
+     */
+    fun connectShizuku(context: Context? = null) {
+        scope.launch(Dispatchers.IO) {
+            appendLine("⚡ Connecting to Shizuku server via API…", TerminalLineType.SYSTEM)
+            try {
+                // Re-bind sticky listeners
+                try {
+                    Shizuku.removeBinderReceivedListener(binderReceivedListener)
+                    Shizuku.removeBinderDeadListener(binderDeadListener)
+                    Shizuku.removeRequestPermissionResultListener(permissionListener)
+                } catch (_: Exception) {}
+
+                Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
+                Shizuku.addBinderDeadListener(binderDeadListener)
+                Shizuku.addRequestPermissionResultListener(permissionListener)
+
+                val running = try { Shizuku.pingBinder() } catch (_: Exception) { false }
+                if (running) {
+                    val version = try { Shizuku.getVersion() } catch (_: Exception) { 0 }
+                    val isPreV11 = try { Shizuku.isPreV11() } catch (_: Exception) { false }
+                    appendLine("🟢 Shizuku Server ONLINE (v$version).", TerminalLineType.SYSTEM)
+
+                    val granted = try {
+                        Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                    } catch (_: Exception) { false }
+
+                    if (granted) {
+                        val uid = try { Shizuku.getUid() } catch (_: Exception) { 2000 }
+                        val seContext = try { Shizuku.getSELinuxContext() } catch (_: Exception) { "u:r:shell:s0" }
+                        appendLine("✔ Elevated Shizuku Shell ACTIVE (UID: $uid, SELinux: $seContext).", TerminalLineType.SYSTEM)
+                        appendLine("💡 Ready: Enter 'grant' to authorize WRITE_SECURE_SETTINGS, or run any shell command.", TerminalLineType.SYSTEM)
+                    } else {
+                        appendLine("🟡 Server online. Authorization required.", TerminalLineType.SYSTEM)
+                        appendLine("👉 Prompting Shizuku authorization dialog on screen…", TerminalLineType.SYSTEM)
+                        try {
+                            Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+                        } catch (e: Exception) {
+                            appendLine("ℹ Permission dialog notice: ${e.message}", TerminalLineType.ERROR)
+                        }
+                    }
+                } else {
+                    val installed = isShizukuInstalled()
+                    if (installed) {
+                        appendLine("🟡 Shizuku app is installed, but server is inactive.", TerminalLineType.SYSTEM)
+                        appendLine("👉 Opening Shizuku app. Tap 'Start' via Wireless Debugging, then return here.", TerminalLineType.SYSTEM)
+                        withContext(Dispatchers.Main) {
+                            launchShizukuApp()
+                        }
+                    } else {
+                        appendLine("🔴 Shizuku is not installed on this device.", TerminalLineType.ERROR)
+                        appendLine("👉 Install Shizuku from https://shizuku.rikka.app to enable on-device ADB.", TerminalLineType.SYSTEM)
+                    }
+                }
+            } catch (e: Exception) {
+                appendLine("ℹ Shizuku API connection notice: ${e.message}", TerminalLineType.ERROR)
+            } finally {
+                refreshState()
             }
         }
     }
@@ -295,6 +366,11 @@ class AdbTerminalManager(
         when (trimmed.lowercase(Locale.getDefault())) {
             "clear" -> {
                 clearLogs()
+                return
+            }
+            "connect", "shizuku-connect", "bind" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                connectShizuku()
                 return
             }
             "help" -> {
@@ -553,12 +629,21 @@ class AdbTerminalManager(
 
                 // 2. Shizuku Execution (UID 2000)
                 var process: Process? = null
-                if (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning) {
+                val shizukuAlive = try { Shizuku.pingBinder() } catch (_: Exception) { false }
+                val shizukuPerm = shizukuAlive && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Exception) { false }
+
+                if (shizukuPerm || (currentEngine == AdbEngine.SHIZUKU && _state.value.isShizukuRunning)) {
                     try {
                         process = spawnShizukuProcess(arrayOf("sh", "-c", trimmed))
                     } catch (e: Exception) {
                         appendLine("ℹ Shizuku notice: ${e.message}. Using fallback engine…", TerminalLineType.SYSTEM)
                     }
+                } else if (shizukuAlive && !shizukuPerm && (trimmed.startsWith("pm ") || trimmed.startsWith("settings ") || trimmed.startsWith("cmd "))) {
+                    appendLine("⚠ Shizuku server is online, but permission is required for privileged commands.", TerminalLineType.SYSTEM)
+                    appendLine("👉 Requesting Shizuku authorization dialog now…", TerminalLineType.SYSTEM)
+                    try {
+                        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
+                    } catch (_: Exception) {}
                 }
 
                 // 3. Kernel Root Execution (UID 0)

@@ -464,6 +464,10 @@ class MainScreenViewModel(
     // ON-DEVICE ADB TERMINAL
     // -------------------------------------------------------------
 
+    fun connectShizuku(context: Context? = null) {
+        adbTerminalManager?.connectShizuku(context)
+    }
+
     fun requestAdbPermission() {
         adbTerminalManager?.requestPermission()
     }
