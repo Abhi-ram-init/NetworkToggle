@@ -1253,6 +1253,7 @@ private fun AdbTerminalScreen(
         val quickChips = listOf(
             "grant",
             "revoke",
+            "shizuku",
             "kernel",
             "kconfig",
             "5g",
@@ -1270,10 +1271,12 @@ private fun AdbTerminalScreen(
         quickChips.forEach { chip ->
             val isGrantChip = chip == "grant"
             val isRevokeChip = chip == "revoke"
+            val isShizukuChip = chip == "shizuku"
             val isKernelChip = chip == "kernel" || chip == "kconfig"
             val chipColor = when {
                 isGrantChip -> Color(0xFF10B981)
                 isRevokeChip -> Color(0xFFEF4444)
+                isShizukuChip -> Color(0xFFA855F7)
                 isKernelChip -> Color(0xFF38BDF8)
                 else -> Color(0xFF94A3B8)
             }

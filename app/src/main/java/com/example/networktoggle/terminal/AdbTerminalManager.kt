@@ -146,9 +146,12 @@ class AdbTerminalManager(
         scope.launch(Dispatchers.IO) {
             val isBridgeConnected = PrivilegedBridgeManager.isConnected
             val shizukuRunning = try { Shizuku.pingBinder() } catch (_: Exception) { false }
-            val shizukuGranted = shizukuRunning && try {
+            val shizukuVersion = if (shizukuRunning) try { Shizuku.getVersion() } catch (_: Exception) { 0 } else 0
+            val isPreV11 = shizukuRunning && (shizukuVersion < 11 || try { Shizuku.isPreV11() } catch (_: Exception) { false })
+            val shizukuGranted = shizukuRunning && !isPreV11 && try {
                 Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
             } catch (_: Exception) { false }
+            val shizukuUid = if (shizukuGranted) try { Shizuku.getUid() } catch (_: Exception) { 2000 } else -1
 
             val rootAvailable = checkRootAvailable()
             val permissionGranted = ContextCompat.checkSelfPermission(
@@ -171,9 +174,12 @@ class AdbTerminalManager(
                     val identity = if (uid == 0) "Root (UID 0)" else "ADB Shell (UID $uid)"
                     "🟢 Authorized via Privileged Bridge ($identity)"
                 }
-                shizukuGranted -> "🟢 Authorized via Shizuku (ADB Shell UID 2000)"
+                shizukuGranted -> {
+                    val idStr = if (shizukuUid == 0) "Root UID 0" else "Shell UID $shizukuUid"
+                    "🟢 Authorized via Shizuku (v$shizukuVersion • $idStr)"
+                }
                 rootAvailable -> "🟢 Authorized via Kernel Root (UID 0)"
-                shizukuRunning -> "🟡 Shizuku Active • Tap 'GRANT' to authorize"
+                shizukuRunning -> "🟡 Shizuku Active (v$shizukuVersion) • Tap 'GRANT' to authorize"
                 else -> "⚡ Local Shell Active (Run 'grant' to authorize app)"
             }
 
@@ -242,9 +248,18 @@ class AdbTerminalManager(
             val shizukuRunning = try { Shizuku.pingBinder() } catch (_: Exception) { false }
             if (shizukuRunning) {
                 try {
+                    val isPreV11 = try { Shizuku.isPreV11() } catch (_: Exception) { false }
+                    if (isPreV11) {
+                        appendLine("⚠ Shizuku v11+ is required. Please update your Shizuku app.", TerminalLineType.ERROR)
+                        return@launch
+                    }
+
                     if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
                         appendLine("✔ Shizuku authorized. Granting WRITE_SECURE_SETTINGS…", TerminalLineType.SYSTEM)
                         grantWriteSecureSettings()
+                    } else if (try { Shizuku.shouldShowRequestPermissionRationale() } catch (_: Exception) { false }) {
+                        appendLine("ℹ Shizuku permission was previously dismissed. Prompting authorization…", TerminalLineType.SYSTEM)
+                        Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
                     } else {
                         appendLine("Prompting Shizuku authorization dialog on phone…", TerminalLineType.SYSTEM)
                         Shizuku.requestPermission(SHIZUKU_REQUEST_CODE)
@@ -288,6 +303,9 @@ class AdbTerminalManager(
                 appendLine("Permission Control (Core):", TerminalLineType.OUTPUT)
                 appendLine("  grant       : Grant WRITE_SECURE_SETTINGS permission for 4G/5G toggling", TerminalLineType.OUTPUT)
                 appendLine("  revoke      : Revoke / remove WRITE_SECURE_SETTINGS permission", TerminalLineType.OUTPUT)
+                appendLine("Shizuku Wireless ADB:", TerminalLineType.OUTPUT)
+                appendLine("  shizuku     : Inspect Shizuku server status, binder ping, version & UID", TerminalLineType.OUTPUT)
+                appendLine("  shizuku-grant: Request Shizuku permission prompt dialog on phone", TerminalLineType.OUTPUT)
                 appendLine("Kernel & Security Hardening:", TerminalLineType.OUTPUT)
                 appendLine("  kernel      : Audit 5 kernel security pillars (Seccomp BPF, SELinux, Namespaces, FFS, Secure Boot)", TerminalLineType.OUTPUT)
                 appendLine("  kconfig     : Inspect kernel config & attack surface reduction flags", TerminalLineType.OUTPUT)
@@ -322,6 +340,37 @@ class AdbTerminalManager(
             "revoke", "revoke-permission", "remove-permission", "remove", "disable-permission", "disable" -> {
                 appendLine("$ $trimmed", TerminalLineType.COMMAND)
                 revokeWriteSecureSettings()
+                return
+            }
+            "shizuku", "shizuku-status" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                val installed = isShizukuInstalled()
+                val running = try { Shizuku.pingBinder() } catch (_: Exception) { false }
+                val version = if (running) try { Shizuku.getVersion() } catch (_: Exception) { 0 } else 0
+                val isPreV11 = running && (version < 11 || try { Shizuku.isPreV11() } catch (_: Exception) { false })
+                val granted = running && !isPreV11 && try { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED } catch (_: Exception) { false }
+                val uid = if (granted) try { Shizuku.getUid() } catch (_: Exception) { -1 } else -1
+
+                appendLine("=== SHIZUKU WIRELESS ADB STATUS ===", TerminalLineType.SYSTEM)
+                appendLine("• App Installed: $installed (moe.shizuku.privileged.api)", TerminalLineType.OUTPUT)
+                appendLine("• Service Status: ${if (running) "🟢 ACTIVE (Binder alive)" else "🔴 INACTIVE / DISCONNECTED"}", TerminalLineType.OUTPUT)
+                if (running) {
+                    appendLine("• API Version: v$version (${if (!isPreV11) "Supported" else "Deprecated < v11"})", TerminalLineType.OUTPUT)
+                    appendLine("• Permission: ${if (granted) "✔ GRANTED (Authorized)" else "⚠ NOT GRANTED (Type 'shizuku-grant')"}", TerminalLineType.OUTPUT)
+                    if (granted) {
+                        val identity = if (uid == 0) "Root (UID 0)" else "ADB Shell (UID $uid)"
+                        appendLine("• Execution Context: $identity", TerminalLineType.OUTPUT)
+                    }
+                } else if (installed) {
+                    appendLine("👉 Start Shizuku: Open the Shizuku app and start via Wireless Debugging (No PC required).", TerminalLineType.OUTPUT)
+                } else {
+                    appendLine("👉 Download Shizuku: Install from GitHub (https://github.com/RikkaApps/Shizuku/releases).", TerminalLineType.OUTPUT)
+                }
+                return
+            }
+            "shizuku-grant", "shizuku-request" -> {
+                appendLine("$ $trimmed", TerminalLineType.COMMAND)
+                requestPermission()
                 return
             }
             "kernel", "kconfig", "kernel-audit", "audit", "security" -> {
