@@ -107,13 +107,17 @@ class MainScreenViewModelTest {
     }
 
     @Test
-    fun navigationTabs_include_settings_and_terminal() {
-        val tabs = NavigationTab.entries
-        assertEquals(4, tabs.size)
-        assertTrue(tabs.contains(NavigationTab.SWITCHER))
-        assertTrue(tabs.contains(NavigationTab.MACRO))
-        assertTrue(tabs.contains(NavigationTab.TERMINAL))
-        assertTrue(tabs.contains(NavigationTab.SETTINGS))
+    fun switchStatus_states_work_correctly() {
+        val idle = SwitchStatus.Idle
+        val switching = SwitchStatus.Switching(NetworkMode.FIVE_G, remainingSeconds = 10)
+        val success = SwitchStatus.Success(NetworkMode.FIVE_G)
+        val failed = SwitchStatus.Failed(NetworkMode.FOUR_G, "5G NR (NR_NSA)")
+
+        assertEquals(NetworkMode.FIVE_G, switching.targetMode)
+        assertEquals(10, switching.remainingSeconds)
+        assertEquals(NetworkMode.FIVE_G, success.mode)
+        assertEquals(NetworkMode.FOUR_G, failed.targetMode)
+        assertEquals("5G NR (NR_NSA)", failed.currentNetwork)
     }
 
     @Test

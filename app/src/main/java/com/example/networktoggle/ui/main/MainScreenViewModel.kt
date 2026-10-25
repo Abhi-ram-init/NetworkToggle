@@ -242,6 +242,23 @@ class MainScreenViewModel(
         executeSwitch(mode, null)
     }
 
+    fun switchNetworkViaShizuku(mode: NetworkMode, context: Context? = null) {
+        selectChoice(mode)
+        viewModelScope.launch(Dispatchers.IO) {
+            _uiState.update { it.copy(switchStatus = SwitchStatus.Switching(mode, 8)) }
+            val terminal = adbTerminalManager
+            if (terminal != null && terminal.state.value.isShizukuRunning && terminal.state.value.isAuthorized) {
+                terminal.setNetworkModeViaAdb(mode)
+                startVerification(mode)
+            } else if (terminal != null && terminal.state.value.isShizukuRunning && !terminal.state.value.isAuthorized) {
+                terminal.requestPermission()
+                _uiState.update { it.copy(popupMessage = "Please approve the Shizuku authorization dialog on your screen.") }
+            } else {
+                executeSwitch(mode, context)
+            }
+        }
+    }
+
     private fun executeSwitch(targetMode: NetworkMode, context: Context?) {
         viewModelScope.launch(Dispatchers.IO) {
             _uiState.update {
