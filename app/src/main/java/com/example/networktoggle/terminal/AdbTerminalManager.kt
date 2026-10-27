@@ -379,8 +379,29 @@ class AdbTerminalManager(
             }
         }
 
+        val lower = trimmed.lowercase(Locale.getDefault())
+        if (lower.startsWith("connect ") || lower.startsWith("adb connect ")) {
+            appendLine("$ $trimmed", TerminalLineType.COMMAND)
+            val target = trimmed.substringAfter("connect ").trim()
+            val parts = target.split(":")
+            val host = if (parts.size == 2) parts[0] else "127.0.0.1"
+            val port = (if (parts.size == 2) parts[1] else parts[0]).toIntOrNull() ?: 5555
+            appendLine("🔌 Connecting directly to ADB socket on $host:$port…", TerminalLineType.SYSTEM)
+            scope.launch(Dispatchers.IO) {
+                val client = AdbSocketClient(host, port)
+                if (client.connect()) {
+                    appendLine("🟢 Connected to ADB socket daemon on $host:$port!", TerminalLineType.SYSTEM)
+                    appendLine("💡 Native ADB socket connection established. Ready for elevated shell commands.", TerminalLineType.SYSTEM)
+                    client.close()
+                } else {
+                    appendLine("🔴 Connection failed to $host:$port. Ensure Wireless Debugging or 'adb tcpip $port' is active.", TerminalLineType.ERROR)
+                }
+            }
+            return
+        }
+
         // 1. Built-in errorless commands that never fail
-        when (trimmed.lowercase(Locale.getDefault())) {
+        when (lower) {
             "clear" -> {
                 clearLogs()
                 return
@@ -746,6 +767,21 @@ class AdbTerminalManager(
     }
 
     private fun spawnShizukuProcess(cmdArray: Array<String>): Process {
+        // 1. Direct typed AIDL binder call via IShizukuService (fastest, type-safe, no reflection overhead)
+        try {
+            val binder = Shizuku.getBinder()
+            if (binder != null) {
+                val service = moe.shizuku.server.IShizukuService.Stub.asInterface(binder)
+                if (service != null) {
+                    val remote = service.newProcess(cmdArray, null, null)
+                    if (remote != null) {
+                        return ShizukuAidlProcess(remote)
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+
+        // 2. Secondary fallback via reflection
         try {
             val method = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
